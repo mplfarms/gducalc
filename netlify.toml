@@ -1,10 +1,36 @@
-# Netlify config — same shape as the Corn Plot Harvest deploy.
+# Netlify config for the GDU Calculator.
+#
+# Deliberately simpler than the Corn Plot Harvest site's: this app is
+# 100% static — no Netlify Functions, no build step, no server-side
+# anything. Every dynamic thing it does (weather, ZIP lookup) is a
+# direct browser fetch to a free public API, so there is nothing here to
+# install, bundle or run.
+
 [build]
   publish = "public"
+  command = ""
 
-# Single-page app: every hash route lives under index.html, but a hard
-# refresh on a deep path still has to resolve to it.
-[[redirects]]
-  from = "/*"
-  to = "/index.html"
-  status = 200
+# NOTE: there is intentionally NO catch-all "/* -> /index.html 200"
+# redirect here, even though that's the reflex for a single-page app.
+#
+# This app routes on the URL hash (#/calculator, #/results), so every
+# real URL is just "/" — an SPA fallback would buy nothing. What it WOULD
+# do is turn a mistyped or missing asset path into a 200 response
+# containing index.html, and the service worker caches any same-origin
+# 200 it sees. A missing .js file would then be cached as an HTML
+# document under a .js URL and fail to parse on every subsequent load,
+# with the cache hiding the real cause. Let missing files 404 honestly.
+
+# The service worker must never be cached at the CDN edge — browsers have
+# to re-fetch it to notice a new build. Same rule as the Corn Plot site.
+# (public/_headers carries this too; whichever Netlify reads first, the
+# answer is the same.)
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "no-cache"
+
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "no-cache"
