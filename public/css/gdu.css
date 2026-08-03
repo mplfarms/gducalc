@@ -1,0 +1,714 @@
+/* GDU Calculator — additions on top of the shared Corn Plot Harvest
+   app-shell stylesheet (css/styles.css, used verbatim).
+
+   Nothing here redefines a shared class; every rule is either a new
+   .gdu-* class or a chart token. That's what lets styles.css be dropped
+   in unmodified from the Corn Plot app and updated from it later
+   without a merge. */
+
+/* ---------- chart color tokens ---------- */
+
+/* The series palette is FIXED across all three Brand Views rather than
+   derived from the brand accent — see the long note at the top of
+   js/ui/chart.js for why (NC+ and Crow's are both red-accented, and a
+   red "this season" line next to a red "abnormally hot" line destroys
+   the one distinction the chart exists to make).
+
+   Light and dark steps were both validated for lightness band, chroma
+   floor, colorblind separation and normal-vision separation against
+   every surface this chart lands on. Declared under both the media
+   query and the [data-theme] scope so the in-app Appearance toggle wins
+   over the OS setting in either direction — matching how styles.css
+   resolves its own light/dark tokens. */
+
+:root {
+  --gdu-current: var(--text);
+  --gdu-lastyear: #1baf7a;
+  --gdu-hot: #eb6834;
+  --gdu-cool: #2a78d6;
+  --gdu-normal: var(--text-muted);
+  --gdu-band: rgba(0, 0, 0, 0.04);
+  --gdu-readout-bg: rgba(255, 255, 255, 0.94);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --gdu-lastyear: #199e70;
+    --gdu-hot: #d95926;
+    --gdu-cool: #3987e5;
+    --gdu-band: rgba(255, 255, 255, 0.06);
+    --gdu-readout-bg: rgba(0, 0, 0, 0.82);
+  }
+}
+
+:root[data-theme="dark"] {
+  --gdu-lastyear: #199e70;
+  --gdu-hot: #d95926;
+  --gdu-cool: #3987e5;
+  --gdu-band: rgba(255, 255, 255, 0.06);
+  --gdu-readout-bg: rgba(0, 0, 0, 0.82);
+}
+
+/* ---------- location card ---------- */
+
+.gdu-location-readout {
+  margin-bottom: 4px;
+}
+
+.gdu-location-name {
+  font-weight: 700;
+  font-size: 1.05rem;
+}
+
+.gdu-location-coords {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.gdu-location-empty {
+  color: var(--text-muted);
+}
+
+.gdu-or-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.gdu-or-divider::before,
+.gdu-or-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.gdu-inline-row {
+  display: flex;
+  gap: 10px;
+}
+
+.gdu-inline-row .text-input {
+  flex: 1;
+}
+
+/* ---------- hybrid card ---------- */
+
+/* Two columns on anything wider than a small phone; the two GDU inputs
+   belong side by side because they're read off the same line of a tech
+   sheet and compared against each other. Below 380px they stack, since
+   a 4-digit number in a half-width box on a 320px screen truncates. */
+.gdu-two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+@media (max-width: 380px) {
+  .gdu-two-col {
+    grid-template-columns: 1fr;
+  }
+}
+
+.gdu-subheading {
+  margin: 18px 0 8px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.gdu-save-hybrid-btn {
+  margin-top: 4px;
+}
+
+.gdu-saved-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.gdu-saved-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.gdu-saved-row:last-child {
+  border-bottom: none;
+}
+
+.gdu-saved-load {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-start;
+  background: none;
+  border: none;
+  padding: 10px 0;
+  text-align: left;
+  cursor: pointer;
+  min-height: 44px;
+  font: inherit;
+  color: inherit;
+}
+
+.gdu-saved-name {
+  font-weight: 700;
+}
+
+.gdu-saved-meta {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.gdu-go-btn {
+  margin-top: 4px;
+}
+
+/* ---------- results ---------- */
+
+.gdu-loading {
+  color: var(--text-muted);
+  text-align: center;
+  padding: 20px 8px;
+  margin: 0;
+}
+
+.gdu-chart-holder {
+  width: 100%;
+  /* The chart measures this element and redraws at its real pixel width
+     (see chart.js) rather than scaling a fixed viewBox, so axis labels
+     stay legible on a phone. A min-height keeps the card from collapsing
+     during the one frame before the first draw. */
+  min-height: 260px;
+}
+
+.gdu-chart-svg {
+  display: block;
+  width: 100%;
+  overflow: visible;
+}
+
+.gdu-grid {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.gdu-grid-x {
+  stroke-dasharray: 2 4;
+}
+
+.gdu-axis-label {
+  fill: var(--text-muted);
+  font-size: 10.5px;
+  font-family: inherit;
+}
+
+/* The silk / black-layer reference lines are deliberately NEUTRAL, not
+   the brand accent. Two of the three Brand Views are red-accented, and a
+   red-dashed reference line sitting a few pixels from the orange
+   "abnormally hot" series is exactly the kind of ambiguity this chart
+   cannot afford. Reference annotations should recede anyway — the data
+   lines are what carry hue. */
+.gdu-stage-line {
+  stroke: var(--text-muted);
+  stroke-width: 1.5;
+  stroke-dasharray: 3 3;
+}
+
+.gdu-stage-label {
+  fill: var(--text);
+  font-size: 10.5px;
+  font-weight: 700;
+  font-family: inherit;
+  paint-order: stroke;
+  stroke: var(--card-bg);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+
+/* Drawn first, behind every line: the 10th-to-90th percentile range. */
+.gdu-band {
+  fill: var(--gdu-band);
+  stroke: none;
+}
+
+.gdu-line {
+  fill: none;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.gdu-today-dot {
+  stroke: var(--card-bg);
+  stroke-width: 2;
+}
+
+.gdu-series-label {
+  font-size: 10.5px;
+  font-weight: 600;
+  font-family: inherit;
+}
+
+.gdu-series-label-hero {
+  font-weight: 800;
+}
+
+.gdu-crosshair-line {
+  stroke: var(--text-muted);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+
+.gdu-crosshair-dot {
+  stroke: var(--card-bg);
+  stroke-width: 1.5;
+}
+
+.gdu-readout-bg {
+  fill: var(--gdu-readout-bg);
+  stroke: var(--border);
+}
+
+.gdu-readout {
+  fill: var(--text);
+  font-size: 10.5px;
+  font-family: inherit;
+}
+
+.gdu-readout-head {
+  font-weight: 700;
+}
+
+/* ---------- legend ---------- */
+
+/* Always rendered — with five series, hue alone is not an acceptable way
+   to establish identity, and two of the palette steps sit just under 3:1
+   contrast on some brand surfaces. The legend, the direct labels at each
+   line's right end, and the scenario table below are the three
+   independent ways to tell the series apart. */
+.gdu-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-top: 10px;
+}
+
+.gdu-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.gdu-legend-swatch {
+  width: 16px;
+  height: 3px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.gdu-legend-swatch-hero {
+  height: 4px;
+}
+
+/* ---------- scenario table ---------- */
+
+.gdu-table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.gdu-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.86rem;
+}
+
+.gdu-table th {
+  text-align: left;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+  font-weight: 700;
+  padding: 0 8px 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.gdu-table td {
+  padding: 9px 8px 9px 0;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.gdu-table tr:last-child td {
+  border-bottom: none;
+}
+
+.gdu-scenario-name {
+  font-weight: 600;
+}
+
+/* The three "this season" rows are the ones being asked about; the
+   historical rows are context. A tinted left edge separates them
+   without adding another color to the page. */
+.gdu-row-current .gdu-scenario-name {
+  box-shadow: inset 3px 0 0 var(--accent-strong);
+  padding-left: 9px;
+}
+
+.gdu-stage-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-start;
+}
+
+.gdu-stage-date {
+  font-weight: 700;
+}
+
+.gdu-stage-days,
+.gdu-never {
+  font-size: 0.76rem;
+  color: var(--text-muted);
+}
+
+.gdu-badge-projected,
+.gdu-badge-frost {
+  font-size: 0.64rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  border-radius: 999px;
+  padding: 1px 7px;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+/* The frost badge is the one place a status color is used, and it ships
+   with its own words ("after median freeze") rather than relying on the
+   color to carry the meaning. */
+.gdu-badge-frost {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #ffffff;
+}
+
+/* ---------- verdicts ---------- */
+
+.gdu-verdict {
+  margin: 12px 0 0;
+  padding: 11px 13px;
+  border-radius: 10px;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  border-left: 4px solid;
+}
+
+.gdu-verdict-good {
+  border-left-color: var(--accent-strong);
+  background: var(--bg);
+}
+
+.gdu-verdict-warn {
+  border-left-color: var(--highlight);
+  background: var(--bg);
+}
+
+.gdu-verdict-bad {
+  border-left-color: var(--danger);
+  background: var(--bg);
+  font-weight: 600;
+}
+
+/* ---------- method ---------- */
+
+.gdu-method-list {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 0.86rem;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.gdu-method-list li {
+  margin-bottom: 7px;
+}
+
+.gdu-method-warn {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.gdu-formula {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  overflow-x: auto;
+}
+
+/* ---------- built-in hybrid list ---------- */
+
+.gdu-pick-hybrid-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* Where the two GDU numbers came from. Rendered between the inputs and
+   the explanatory note, so the provenance sits with the values it
+   describes rather than in a footnote. */
+.gdu-catalog-note {
+  margin-top: 10px;
+}
+
+.gdu-catalog-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  font-size: 0.84rem;
+  color: var(--text-muted);
+}
+
+/* An edited value must not keep wearing the neutral "from the list"
+   badge — same shape, brand accent, so the difference reads at a glance
+   without a second glyph. */
+.gdu-tag-edited {
+  color: var(--accent-strong);
+  border-color: var(--accent-strong);
+}
+
+.gdu-catalog-reset {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--accent-strong);
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* A "look twice" prompt for a rating that is far off its maturity's
+   norm. Warning-colored, never red: the number is not wrong, it is
+   unusual, and the app has no standing to call it an error. */
+.gdu-catalog-outlier {
+  margin: 8px 0 0;
+  padding: 9px 11px;
+  border-left: 4px solid var(--highlight);
+  border-radius: 8px;
+  background: var(--bg);
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: var(--text);
+}
+
+/* ---------- hybrid picker modal ---------- */
+
+.hybrid-picker-rm-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 6px 14px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+/* Two lines per row: variety, then the numbers being chosen. Overrides
+   .search-list-option's own row layout rather than replacing the class,
+   so hover, selection and the 44px tap target all still come from the
+   shared stylesheet. */
+.hybrid-picker-option {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.hybrid-picker-name {
+  font-weight: 600;
+}
+
+.hybrid-picker-gdu {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.search-list-option-selected .hybrid-picker-gdu {
+  color: var(--accent-strong);
+}
+
+/* ---------- stage + data section ---------- */
+
+/* The stage chart and the data table share one scenario selector and
+   repaint together, so they live in a common holder. It has to reproduce
+   .screen-body's own 16px gap, since the holder is a single flex child
+   there but renders two cards. */
+.gdu-stage-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.gdu-scenario-select {
+  margin-bottom: 4px;
+}
+
+.gdu-stage-now {
+  margin: 0 0 10px;
+  font-size: 0.9rem;
+  color: var(--text);
+}
+
+.gdu-stage-chart-holder {
+  width: 100%;
+  min-height: 300px;
+}
+
+.gdu-stage-chart-svg {
+  display: block;
+  width: 100%;
+}
+
+/* ---------- stage bands ---------- */
+
+/* A SEQUENTIAL ramp — one hue, stepped light to dark by season progress
+   (alpha is set per band in stageChart.js). Not a categorical palette:
+   the bands encode one ordered quantity, and fifteen different hues
+   would imply fifteen unrelated categories. Alpha over the card surface
+   rather than fixed hex steps is what lets the same ramp sit correctly
+   on Midwest green, NC+ blue and Crow's near-black cards. */
+.gdu-stage-band {
+  fill: #2f7d4f;
+}
+
+:root[data-theme="dark"] .gdu-stage-band,
+:root:not([data-theme]) .gdu-stage-band {
+  fill: #2f7d4f;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) .gdu-stage-band {
+    fill: #57b07d;
+  }
+}
+
+:root[data-theme="dark"] .gdu-stage-band {
+  fill: #57b07d;
+}
+
+/* A 2px surface-colored rule between adjacent steps of the ramp, so
+   neighbouring bands stay separable without introducing a border hue. */
+.gdu-stage-divider {
+  stroke: var(--card-bg);
+  stroke-width: 2;
+}
+
+.gdu-stage-band-label {
+  fill: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+}
+
+/* Planting, Silks and Maturity are the grower's own numbers; every other
+   stage is a scaled estimate. Bold marks the difference in the picture,
+   and the caption underneath says so in words. */
+.gdu-stage-band-label-anchored {
+  font-weight: 800;
+}
+
+.gdu-stage-band-sub,
+.gdu-axis-title {
+  fill: var(--text-muted);
+  font-size: 10px;
+  font-family: inherit;
+}
+
+.gdu-stage-top-label {
+  fill: var(--text);
+  font-size: 12px;
+  font-weight: 800;
+  font-family: inherit;
+}
+
+/* Where the crop actually is: a filled gutter up the left edge of the
+   plot, paired with the dashed rule below. Kept out of the middle of the
+   plot on purpose — the band labels are centered, and a centered column
+   would draw its edges straight through every one of them. */
+.gdu-stage-progress {
+  fill: var(--text);
+  fill-opacity: 0.55;
+}
+
+.gdu-stage-today-line {
+  stroke: var(--danger);
+  stroke-width: 1.5;
+  stroke-dasharray: 5 4;
+}
+
+.gdu-stage-today-label {
+  fill: var(--danger);
+  font-size: 11px;
+  font-weight: 700;
+  font-family: inherit;
+  paint-order: stroke;
+  stroke: var(--card-bg);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+
+/* ---------- data table ---------- */
+
+.gdu-data-table {
+  font-size: 0.82rem;
+  min-width: 460px;
+}
+
+.gdu-data-table td,
+.gdu-data-table th {
+  white-space: nowrap;
+  padding-right: 12px;
+}
+
+.gdu-stage-code {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.gdu-stage-est {
+  display: block;
+  font-size: 0.66rem;
+  color: var(--text-muted);
+}
+
+.gdu-num {
+  font-variant-numeric: tabular-nums;
+}
+
+.gdu-row-anchored .gdu-scenario-name {
+  box-shadow: inset 3px 0 0 var(--accent-strong);
+  padding-left: 9px;
+  font-weight: 700;
+}

@@ -1,0 +1,268 @@
+// src/core/season.js
+//
+// Turns a daily temperature record + a planting date + a hybrid's GDU
+// ratings into the set of scenario curves the app draws and tables.
+// Still pure (no fetch, no DOM) — weather.js does the network, this
+// does the reasoning.
+//
+// ---------------------------------------------------------------
+// The scenarios
+// ---------------------------------------------------------------
+// Five curves, all cumulative GDU from the SAME planting date so they
+// are directly comparable:
+//
+//   current  — this season: observed GDUs to date, then the 16-day
+//              forecast, then a projection to finish the season out.
+//              Drawn solid up to the last real/forecast day and dashed
+//              after it, because those are different kinds of number
+//              and the chart should not pretend otherwise.
+//   lastYear — the previous season's ACTUAL accumulation from the same
+//              planting date. A real year, not a statistic.
+//   normal   — 50th percentile of the baseline years.
+//   hot      — 90th percentile ("abnormally hot").
+//   cool     — 10th percentile ("abnormally cool").
+//
+// The three percentile curves are pointwise order statistics across
+// years (see gdu.js's envelopeFromCalendarDate) — an envelope, not a
+// replay of any particular year.
+//
+// The current-season projection is spliced on using the percentile of
+// REMAINING accumulation from the day after the last known day, not by
+// summing "normal daily rates". That distinction matters: percentiles
+// do not add, so summing 90th-percentile daily values would produce a
+// season total far hotter than any 90th-percentile season ever was.
+// Anchoring the envelope at the splice date and adding the whole
+// remaining-accumulation percentile keeps the statistics honest.
+//
+// Three finishes are computed for the current season (normal / hot /
+// cool rest-of-season) because "when will this hybrid black layer"
+// genuinely has a range of answers in early August, and quoting a
+// single date would overstate what the data supports.
+
+import { addDays, daysBetween, isoForYear, monthDayOf, yearOf } from "./dates.js";
+import { accumulate, envelopeFromCalendarDate, firstFreezeStats, offsetAtTarget } from "./gdu.js";
+
+/** Season window length. ~7 months covers even a 120-day-RM hybrid in a
+ *  cold year plus the whole frost-risk tail. */
+export const SEASON_DAYS = 220;
+
+/** How many completed years feed the normal / hot / cool envelopes. */
+export const BASELINE_YEARS = 30;
+
+const dateFns = { addDays, isoForYear };
+
+/**
+ * @param {number} plantingYear
+ * @returns {number[]} the BASELINE_YEARS completed years before it
+ */
+export function baselineYearsFor(plantingYear) {
+  const years = [];
+  for (let y = plantingYear - BASELINE_YEARS; y <= plantingYear - 1; y++) years.push(y);
+  return years;
+}
+
+/**
+ * @typedef {Object} Scenario
+ * @property {string} key
+ * @property {string} label
+ * @property {(number|null)[]} cum cumulative GDU by day-offset from planting
+ * @property {number} solidThroughOffset last offset backed by observed or
+ *   forecast data (everything after it is projected); SEASON_DAYS-1 for a
+ *   fully historical scenario, -1 when nothing is observed.
+ * @property {boolean} isProjection whether any part of the curve is modeled
+ */
+
+/**
+ * Builds every scenario curve plus the derived stage dates.
+ *
+ * @param {Object} args
+ * @param {Object<string, import('./gdu.js').DayRecord>} args.index daily record map
+ * @param {string} args.plantingIso "YYYY-MM-DD"
+ * @param {number} args.gduToSilk
+ * @param {number} args.gduToBlackLayer
+ * @param {string} args.lastKnownIso last date in `index` with data (forecast end)
+ * @param {string} args.lastObservedIso last date backed by OBSERVED (not forecast) data
+ * @returns {Object} full result bundle — see the return statement.
+ */
+export function buildSeason({ index, plantingIso, gduToSilk, gduToBlackLayer, lastKnownIso, lastObservedIso }) {
+  const plantingYear = yearOf(plantingIso);
+  const plantingMonthDay = monthDayOf(plantingIso);
+  const years = baselineYearsFor(plantingYear);
+
+  // ---- climatological envelope from the planting date ----
+  const env = envelopeFromCalendarDate(index, plantingMonthDay, years, SEASON_DAYS, dateFns);
+
+  // ---- last year's actual ----
+  const lastYearStart = isoForYear(plantingMonthDay, plantingYear - 1);
+  const lastYearAcc = lastYearStart
+    ? accumulate(index, lastYearStart, SEASON_DAYS, addDays)
+    : { cum: new Array(SEASON_DAYS).fill(null), complete: false, lastCompleteOffset: -1 };
+
+  // ---- this season: observed + forecast, then projected ----
+  const known = accumulate(index, plantingIso, SEASON_DAYS, addDays);
+  // Clamp to lastKnownIso rather than trusting the index to simply run
+  // out. In production the two agree (the index ends at the forecast's
+  // last day), but the index also holds 30 years of history, and for a
+  // planting date in a PAST season it would happily accumulate the
+  // entire window from the archive — which would then be presented as
+  // "known" data with a projection spliced after it. Making the caller's
+  // stated horizon authoritative keeps "known" meaning exactly what the
+  // chart's solid-line legend claims it means.
+  const horizonOffset = lastKnownIso ? daysBetween(plantingIso, lastKnownIso) : SEASON_DAYS - 1;
+  // Floor at -1 ("nothing known yet") rather than letting a planting
+  // date far in the future produce a large negative offset.
+  const knownEndOffset = Math.max(-1, Math.min(known.lastCompleteOffset, horizonOffset));
+  for (let i = knownEndOffset + 1; i < SEASON_DAYS; i++) known.cum[i] = null;
+
+  // How much of the known curve is real observation vs. forecast — the
+  // chart draws forecast days differently from observed ones.
+  const observedEndOffset =
+    lastObservedIso && daysBetween(plantingIso, lastObservedIso) >= 0
+      ? Math.min(daysBetween(plantingIso, lastObservedIso), knownEndOffset)
+      : -1;
+
+  /** @type {{normal: (number|null)[], hot: (number|null)[], cool: (number|null)[]}} */
+  const currentFinishes = { normal: null, hot: null, cool: null };
+  let remainingEnv = null;
+
+  if (knownEndOffset >= 0) {
+    const base = known.cum[knownEndOffset];
+    const spliceIso = addDays(plantingIso, knownEndOffset + 1);
+    const remainingDays = SEASON_DAYS - (knownEndOffset + 1);
+    if (remainingDays > 0) {
+      remainingEnv = envelopeFromCalendarDate(index, monthDayOf(spliceIso), years, remainingDays, dateFns);
+    }
+    for (const [key, band] of [
+      ["normal", "p50"],
+      ["hot", "p90"],
+      ["cool", "p10"],
+    ]) {
+      const curve = known.cum.slice();
+      if (remainingEnv) {
+        for (let j = 0; j < remainingDays; j++) {
+          const add = remainingEnv[band][j];
+          curve[knownEndOffset + 1 + j] = add === null ? null : base + add;
+        }
+      }
+      currentFinishes[key] = curve;
+    }
+  }
+
+  /** @type {Scenario[]} */
+  const scenarios = [];
+  if (knownEndOffset >= 0) {
+    scenarios.push({
+      key: "current",
+      label: `This Season (${plantingYear})`,
+      cum: currentFinishes.normal,
+      solidThroughOffset: knownEndOffset,
+      observedThroughOffset: observedEndOffset,
+      isProjection: knownEndOffset < SEASON_DAYS - 1,
+    });
+  }
+  scenarios.push(
+    {
+      key: "lastYear",
+      label: `Last Year (${plantingYear - 1})`,
+      cum: lastYearAcc.cum,
+      solidThroughOffset: lastYearAcc.lastCompleteOffset,
+      observedThroughOffset: lastYearAcc.lastCompleteOffset,
+      isProjection: false,
+    },
+    {
+      key: "hot",
+      label: "Abnormally Hot (90th pct)",
+      cum: env.p90,
+      solidThroughOffset: SEASON_DAYS - 1,
+      observedThroughOffset: SEASON_DAYS - 1,
+      isProjection: false,
+    },
+    {
+      key: "normal",
+      label: `Normal (${BASELINE_YEARS}-yr median)`,
+      cum: env.p50,
+      solidThroughOffset: SEASON_DAYS - 1,
+      observedThroughOffset: SEASON_DAYS - 1,
+      isProjection: false,
+    },
+    {
+      key: "cool",
+      label: "Abnormally Cool (10th pct)",
+      cum: env.p10,
+      solidThroughOffset: SEASON_DAYS - 1,
+      observedThroughOffset: SEASON_DAYS - 1,
+      isProjection: false,
+    }
+  );
+
+  // ---- stage dates per scenario ----
+  const rows = [];
+
+  if (knownEndOffset >= 0) {
+    for (const [key, label] of [
+      ["normal", "This season — normal finish"],
+      ["hot", "This season — hot finish"],
+      ["cool", "This season — cool finish"],
+    ]) {
+      rows.push(makeRow(`current-${key}`, label, currentFinishes[key], plantingIso, gduToSilk, gduToBlackLayer, knownEndOffset));
+    }
+  }
+  rows.push(
+    makeRow("lastYear", `Last year (${plantingYear - 1}) actual`, lastYearAcc.cum, plantingIso, gduToSilk, gduToBlackLayer, SEASON_DAYS - 1),
+    makeRow("hot", "Abnormally hot year (90th pct)", env.p90, plantingIso, gduToSilk, gduToBlackLayer, SEASON_DAYS - 1),
+    makeRow("normal", `Normal (${BASELINE_YEARS}-yr median)`, env.p50, plantingIso, gduToSilk, gduToBlackLayer, SEASON_DAYS - 1),
+    makeRow("cool", "Abnormally cool year (10th pct)", env.p10, plantingIso, gduToSilk, gduToBlackLayer, SEASON_DAYS - 1)
+  );
+
+  // ---- frost ----
+  const killingFreeze = firstFreezeStats(index, years, 28, dateFns);
+  const lightFrost = firstFreezeStats(index, years, 32, dateFns);
+
+  // ---- to-date summary ----
+  const gduToDate = knownEndOffset >= 0 && observedEndOffset >= 0 ? known.cum[observedEndOffset] : null;
+  const normalToDate = observedEndOffset >= 0 ? env.p50[observedEndOffset] : null;
+
+  return {
+    plantingIso,
+    plantingYear,
+    scenarios,
+    rows,
+    env,
+    lastYearAcc,
+    knownEndOffset,
+    observedEndOffset,
+    lastKnownIso,
+    lastObservedIso,
+    yearsUsed: env.yearsUsed,
+    killingFreeze,
+    lightFrost,
+    gduToDate,
+    normalToDate,
+    gduVsNormal: gduToDate !== null && normalToDate !== null ? gduToDate - normalToDate : null,
+    seasonDays: SEASON_DAYS,
+  };
+}
+
+function makeRow(key, label, cum, plantingIso, gduToSilk, gduToBlackLayer, solidThroughOffset) {
+  const silkOffset = offsetAtTarget(cum, gduToSilk);
+  const blOffset = offsetAtTarget(cum, gduToBlackLayer);
+  const finalIdx = lastNonNull(cum);
+  return {
+    key,
+    label,
+    silkOffset,
+    silkIso: silkOffset === null ? null : addDays(plantingIso, silkOffset),
+    silkIsProjected: silkOffset !== null && silkOffset > solidThroughOffset,
+    blackLayerOffset: blOffset,
+    blackLayerIso: blOffset === null ? null : addDays(plantingIso, blOffset),
+    blackLayerIsProjected: blOffset !== null && blOffset > solidThroughOffset,
+    seasonTotal: finalIdx === -1 ? null : cum[finalIdx],
+  };
+}
+
+function lastNonNull(arr) {
+  for (let i = arr.length - 1; i >= 0; i--) {
+    if (arr[i] !== null && arr[i] !== undefined && Number.isFinite(arr[i])) return i;
+  }
+  return -1;
+}

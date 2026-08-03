@@ -1,0 +1,10 @@
+# Netlify config — same shape as the Corn Plot Harvest deploy.
+[build]
+  publish = "public"
+
+# Single-page app: every hash route lives under index.html, but a hard
+# refresh on a deep path still has to resolve to it.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

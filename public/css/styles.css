@@ -1,0 +1,2578 @@
+/* Corn Plot Harvest — app shell styles.
+   Brand colors are applied at runtime as CSS custom properties on :root
+   by src/ui/brand.js (applyBrandTheme). The defaults below match the
+   Midwest Seed Genetics palette so the app looks correct even before
+   JS has run (e.g. first paint). */
+
+:root {
+  --accent: #09452c;
+  --accent-light: #4c9a6b;
+  --accent-pale: #9cc93b;
+  --highlight: #febe10;
+  --chrome: #08341f;
+  --danger: #c94a4a;
+  --bg-light: #f4f8f1;
+  --bg-dark: #04140c;
+  --card-light: #f4f8f1;
+  --card-dark: #0c4a2c;
+  --theme-color: #08341f;
+
+  /* Active (mode-resolved) tokens — redefined below for light and dark,
+     both as prefers-color-scheme media queries (mode: "system", the
+     default) and as [data-theme] attribute overrides (mode: "light" /
+     "dark", set explicitly from Settings — see src/ui/theme.js). The
+     attribute selectors always win over the media-query ones regardless
+     of source order, since an attribute selector is more specific than
+     a bare :root — the :not([data-theme]) guards below are just belt
+     and suspenders to make that intent explicit.
+
+     --accent-strong is a semantic token for foreground text/borders/
+     icons that sit directly on --bg or --card-bg (a button outline, a
+     "selected" list row, a stat value) rather than *on* an accent-
+     colored fill. In light mode the brand's dark --accent reads clearly
+     on the light background; that same dark accent is nearly the same
+     luminance as the dark background in dark mode (this was the actual
+     bug behind "Use Device Location" being unreadable — dark green text
+     on a near-black background), so dark mode resolves it to the
+     brighter --accent-light instead. */
+  --bg: var(--bg-light);
+  --card-bg: #ffffff;
+  --text: #16241c;
+  --text-muted: #5b6b60;
+  --border: rgba(0, 0, 0, 0.08);
+  --accent-strong: var(--accent);
+
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    --bg: var(--bg-light);
+    --card-bg: #ffffff;
+    --text: #16241c;
+    --text-muted: #5b6b60;
+    --border: rgba(0, 0, 0, 0.08);
+    --accent-strong: var(--accent);
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --bg: var(--bg-dark);
+    --card-bg: var(--card-dark);
+    --text: #f2f6f0;
+    --text-muted: #b9c7bd;
+    --border: rgba(255, 255, 255, 0.12);
+    --accent-strong: var(--accent-light);
+  }
+}
+
+:root[data-theme="light"] {
+  --bg: var(--bg-light);
+  --card-bg: #ffffff;
+  --text: #16241c;
+  --text-muted: #5b6b60;
+  --border: rgba(0, 0, 0, 0.08);
+  --accent-strong: var(--accent);
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --bg: var(--bg-dark);
+  --card-bg: var(--card-dark);
+  --text: #f2f6f0;
+  --text-muted: #b9c7bd;
+  --border: rgba(255, 255, 255, 0.12);
+  --accent-strong: var(--accent-light);
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-tap-highlight-color: transparent;
+}
+
+#app {
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+/* Kills the browser's double-tap-to-zoom gesture on every button
+   app-wide (pinch-zoom and scrolling are unaffected — "manipulation"
+   only removes the double-tap special-case). Without this, two quick
+   taps on the SAME control — the date picker's month arrows were the
+   reported case (backing up more than one month), but any
+   rapid-repeat-tap control has the same exposure — register as a
+   double-tap and ZOOM the page instead of stepping twice. */
+button {
+  touch-action: manipulation;
+}
+
+a {
+  color: var(--accent-strong);
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* ---------- layout ---------- */
+
+.screen {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+.screen-body {
+  flex: 1;
+  width: 100%;
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 16px 16px calc(32px + env(safe-area-inset-bottom));
+  padding-left: max(16px, env(safe-area-inset-left));
+  padding-right: max(16px, env(safe-area-inset-right));
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.screen-heading {
+  margin: 4px 0 0;
+  font-size: 1.4rem;
+  font-weight: 700;
+}
+
+.section-spacer {
+  height: 8px;
+}
+
+.empty-state {
+  color: var(--text-muted);
+  text-align: center;
+  padding: 24px 8px;
+}
+
+/* ---------- top bar ---------- */
+
+/* Three-column grid, not flexbox — the two outer columns are equal `1fr`
+   shares, so the middle (title) column sits truly centered regardless of
+   how much content Home/Back vs. the sync icon/gear happen to carry on
+   any given screen. A flexbox space-between approach can't guarantee
+   this: if the left and right groups aren't the same width (e.g. a Back
+   button appears, or the sync icon does), the title visibly drifts off
+   center. Grid's 1fr/auto/1fr keeps it centered even when they're
+   lopsided, as long as neither side's content overflows its own share
+   (icon-only buttons here are small enough that this never happens). */
+.top-bar {
+  background: var(--chrome);
+  color: #ffffff;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 8px;
+  padding: calc(10px + env(safe-area-inset-top)) 12px 10px;
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+
+.top-bar-left {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  justify-self: start;
+  min-width: 0;
+}
+
+.top-bar-title {
+  color: #ffffff;
+  font-weight: 700;
+  font-size: 1.05rem;
+  text-align: center;
+  justify-self: center;
+  min-width: 0;
+  max-width: 60vw;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.top-bar-right {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  justify-self: end;
+  min-width: 0;
+}
+
+.top-bar-btn {
+  background: transparent;
+  border: none;
+  color: #ffffff;
+  font-weight: 600;
+  padding: 10px 8px;
+  min-height: 44px;
+  min-width: 44px;
+  border-radius: 8px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.top-bar-btn:active {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.sync-icon-btn {
+  font-size: 1.15rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.top-bar-btn-settings {
+  font-size: 1.3rem;
+  line-height: 1;
+}
+
+/* Home and Back are icon-only (barn SVG, ‹ — no text label). Deliberately
+   a bit bigger than the Settings gear (1.3rem) now — glyphs at the same
+   font-size don't read as visually equal weight (‹/⚙ have less ink than
+   the barn), so a small bump keeps all three feeling like one consistent
+   set rather than Home/Back looking smaller. Still nowhere near crowding
+   the center title: a bare glyph/icon at this size is a fraction of the
+   width "Home"/"‹ Back" used to take. This font-size only directly sizes
+   Back's "‹" glyph now — Home's barn icon is sized via its own SVG
+   width/height (see .top-bar-btn-home/.top-bar-home-icon below), though
+   the button still carries this class for its shared button chrome. */
+.top-bar-btn-nav {
+  font-size: 1.5rem;
+}
+
+/* Home is now an outlined barn SVG, not a text glyph (see topBar.js's
+   BARN_ICON_SVG) — font-size above still applies to Back's "‹" (both
+   share .top-bar-btn-nav), but the icon itself needs its own centering
+   since an inline <svg> doesn't inherit line-height-based vertical
+   centering the way a text glyph does. */
+.top-bar-btn-home {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.top-bar-home-icon {
+  display: inline-flex;
+}
+
+/* Plot Summary's "i" info icon, in the top-bar-right slot alongside the
+   gear (see topBar.js's `right` opt — it sits immediately to the left of
+   the permanent Settings gear). A circled glyph reads clearly as "more
+   info" at a glance, distinct from the gear's plain icon and the sync
+   icon's text-weight glyph. Italic serif "i" (rather than the button's
+   normal sans-serif) reads as the conventional ⓘ information symbol
+   instead of a plain lowercase letter. */
+.top-bar-btn-help {
+  font-size: 1rem;
+}
+
+.top-bar-btn-help-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 2px solid #ffffff;
+  border-radius: 50%;
+  font-family: Georgia, "Times New Roman", serif;
+  font-style: italic;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* Plot Summary's share-as-web-page icon (box-with-up-arrow SVG — see
+   SHARE_ICON_SVG in plotSummary.js), sitting to the LEFT of the "i"
+   help badge in the same top-bar-right slot. Same inline-flex wrapper
+   pattern as .top-bar-home-icon above. */
+.top-bar-share-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sync-icon-synced {
+  color: #4ade80;
+}
+
+.sync-icon-not-synced {
+  color: #f87171;
+}
+
+/* ---------- cards / sections ---------- */
+
+.card {
+  background: var(--card-bg);
+  border-radius: 14px;
+  padding: 16px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  border: 1px solid var(--border);
+}
+
+.section-header {
+  margin: -16px -16px 14px;
+  padding: 10px 16px;
+  background: var(--accent);
+  color: #ffffff;
+  font-weight: 700;
+  font-size: 0.95rem;
+  border-radius: 14px 14px 0 0;
+  letter-spacing: 0.01em;
+}
+
+h3.section-header:first-child {
+  margin-top: -16px;
+}
+
+/* section-header used as a standalone list title (not inside a card) */
+.screen-body > .section-header {
+  margin: 0;
+  border-radius: 10px;
+}
+
+/* ---------- form fields ---------- */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.field:last-child {
+  margin-bottom: 0;
+}
+
+.field-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.field-note {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin: 4px 0 0;
+  line-height: 1.4;
+}
+
+/* Plot Details' Form ID note doubles as a manual retry button while
+   unassigned (see trialDetails.js) — reset every bit of default <button>
+   chrome so it still reads as plain, tappable note text rather than a
+   boxed browser button, matching every other .field-note on this screen. */
+.trial-details-form-id-retry-btn {
+  display: block;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 4px 0 0;
+  text-align: left;
+  text-decoration: underline;
+  cursor: pointer;
+  font: inherit;
+}
+
+.trial-details-form-id-retry-btn:disabled {
+  cursor: default;
+  text-decoration: none;
+  opacity: 0.7;
+}
+
+.text-input {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+}
+
+.text-input:focus {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 1px;
+}
+
+.text-input:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+
+.text-area {
+  min-height: 84px;
+  resize: vertical;
+}
+
+.field-locked {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--text-muted);
+  background: var(--card-bg);
+}
+
+.field-locked-tag {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.field-wrapper {
+  display: contents;
+}
+
+/* ---------- buttons ---------- */
+
+.btn {
+  min-height: 44px;
+  padding: 10px 18px;
+  border-radius: 10px;
+  border: none;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: #ffffff;
+}
+
+.btn-secondary {
+  background: transparent;
+  color: var(--accent-strong);
+  border: 1.5px solid var(--accent-strong);
+}
+
+.btn-danger {
+  background: var(--danger);
+  color: #ffffff;
+}
+
+.btn-block {
+  width: 100%;
+}
+
+.entry-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+
+/* ---------- account / cloud sync ---------- */
+
+.account-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+
+.account-status-text {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.account-error-note {
+  color: var(--danger);
+}
+
+/* The required-fields note on the new-user Welcome! form (see
+   newUserDetailsModal.js — every field is required, per explicit
+   request). Same danger color as the sign-in form's own error note. */
+.new-user-details-error {
+  color: var(--danger);
+}
+
+.settings-version-footer {
+  margin: 8px 0 0;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+/* ---------- launch screen (Home / sign in with email) ---------- */
+
+/* Plain white page, fixed regardless of light/dark mode — same idea as
+   brand-select-screen forcing its own navy background below rather than
+   following --bg. Per explicit request, this replaced what used to be a
+   full-bleed navy-blue gradient background (see .launch-header-bar/
+   .launch-footer-bar right below, which now carry that same navy —
+   #0c2336, the Republic shield artwork's own blue, also used by
+   .launch-title/.launch-quick-start-link/the primary button further
+   down — as a header/footer frame instead of a full-page background). */
+.launch-screen {
+  background: #ffffff;
+  color: #16241c;
+  justify-content: flex-start;
+}
+
+/* Solid-navy bands bookending the page top and bottom — each bleeds into
+   its side's device safe-area inset (notch / home-indicator) via its own
+   padding, so .launch-screen itself no longer needs to reserve that
+   space. .launch-form-body's flex:1 (inherited from .screen-body) fills
+   any leftover vertical space above the footer bar, so it sits right at
+   the bottom of the viewport on short content and scrolls into view
+   below the fold on tall content — same behavior as a normal page
+   footer. */
+.launch-header-bar {
+  background: #0c2336;
+  height: 28px;
+  padding-top: env(safe-area-inset-top);
+  flex-shrink: 0;
+}
+
+.launch-footer-bar {
+  background: #0c2336;
+  height: 28px;
+  padding-bottom: env(safe-area-inset-bottom);
+  flex-shrink: 0;
+}
+
+.launch-branding {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 28px 24px 12px;
+}
+
+/* The app's name, above the Republic shield. Same navy as the shield
+   artwork/primary button (#0c2336) rather than the screen's default text
+   color, so it reads as a wordmark rather than body copy. */
+.launch-title {
+  margin: 0 0 14px;
+  text-align: center;
+  font-size: 1.5rem;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  color: #0c2336;
+}
+
+.launch-shield {
+  display: block;
+  width: auto;
+  height: auto;
+  max-height: min(26vh, 220px);
+  max-width: 70%;
+  object-fit: contain;
+}
+
+.launch-brand-train {
+  display: block;
+  width: 100%;
+  max-width: 480px;
+  height: auto;
+  object-fit: contain;
+  margin-top: 18px;
+}
+
+.launch-form-body {
+  width: 100%;
+  max-width: 420px;
+  margin: 8px auto 0;
+  gap: 12px;
+  /* Overrides .screen-body's shared calc(32px + env(safe-area-inset-bottom))
+     bottom padding — .launch-footer-bar right below already extends into
+     that same safe-area inset itself, so keeping it here too would just
+     double up the blank space above the footer bar on notch/home-
+     indicator devices. */
+  padding-bottom: 24px;
+}
+
+/* Fixed muted gray-green (light mode's own --text-muted value) rather
+   than plain var(--text-muted) — this screen's background is now
+   deliberately fixed white regardless of theme (see .launch-screen
+   above), but the CSS variable itself still flips to a much LIGHTER
+   shade in dark mode (meant for dark backgrounds), which would read as
+   washed-out/low-contrast against this always-white page. Same fixed-
+   regardless-of-theme approach as .launch-title/.launch-quick-start-link
+   just above. */
+.launch-form-body .field-label {
+  color: #5b6b60;
+}
+
+.launch-note {
+  text-align: center;
+  color: #5b6b60;
+}
+
+/* Sign In button — no brand is known yet on this screen (that's decided
+   AFTER signing in), so it can't use var(--accent) without misleadingly
+   showing whichever brand's green/red happens to be the CSS defaults.
+   Uses a blue-gray pulled straight from the Republic shield artwork
+   instead, so it reads as neutral "Republic" branding rather than
+   accidentally Midwest- or NC+-colored. */
+.launch-form-body .btn-primary {
+  background: #0c2336;
+}
+
+.launch-form-body .btn-primary:active {
+  background: #16344c;
+}
+
+/* Informational, not part of the sign-in form itself — styled as a
+   plain underlined link (same idea as .home-btn-ghost on the Home
+   Screen) rather than another bordered button, in the same navy blue
+   as the shield/primary button so it still reads as intentional rather
+   than a stray gray link. */
+.launch-quick-start-link {
+  background: transparent;
+  border: none;
+  color: #0c2336;
+  text-decoration: underline;
+  font-weight: 600;
+  font-size: 0.95rem;
+  padding: 10px 8px;
+  min-height: 44px;
+  cursor: pointer;
+  align-self: center;
+}
+
+/* ---------- manage users (admin) ---------- */
+
+/* .manage-user-card itself is just a plain .card now — its header (name +
+   "☰" edit button, see .admin-user-header) is the full-bleed dark bar at
+   the top (same look as All Plots (Admin)'s cards), and everything below
+   it (email/role + the action buttons) sits in .manage-user-card-body,
+   which is what actually carries the side-by-side flex layout the whole
+   card used to have on itself before the header existed. */
+.manage-user-card-body {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.manage-user-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.manage-user-info .field-note {
+  margin: 0;
+}
+
+.manage-user-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* ---------- brand select ---------- */
+
+.brand-select-screen {
+  /* Republic Royal Blue — Republic Regional Seed Network's brand blue,
+     the parent network behind the Midwest Seed Genetics / NC+ brands
+     shown on this screen. Placeholder hex until the exact brand value
+     is confirmed — see chat. */
+  background: #002868;
+  color: #ffffff;
+  justify-content: space-between;
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.brand-select-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  padding: 24px;
+  text-align: center;
+  position: relative;
+}
+
+.brand-select-back-link {
+  position: absolute;
+  top: 24px;
+  left: 24px;
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.75);
+  font-weight: 600;
+  min-height: 44px;
+  padding: 0 8px;
+  cursor: pointer;
+}
+
+.brand-select-title {
+  font-size: 2rem;
+  font-weight: 800;
+  margin: 0;
+}
+
+.brand-select-subtitle {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.brand-select-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  max-width: 320px;
+  margin-top: 12px;
+}
+
+.brand-select-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1.5px solid rgba(255, 255, 255, 0.2);
+  border-radius: 16px;
+  padding: 20px;
+  cursor: pointer;
+  color: #ffffff;
+  min-height: 44px;
+}
+
+.brand-select-btn:active {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.brand-select-logo {
+  width: 96px;
+  height: 96px;
+  object-fit: contain;
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 8px;
+}
+
+.brand-select-name {
+  font-weight: 700;
+  font-size: 1.05rem;
+}
+
+.brand-select-footer {
+  text-align: center;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 0.82rem;
+  padding: 16px 24px;
+  margin: 0;
+}
+
+/* ---------- home screen (plot chooser) ---------- */
+
+.home-screen {
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+/* Fills all space below the top bar with a solid brand-color background
+   (var(--chrome) — dark green for Midwest Seed Genetics, blue for NC+,
+   black for Crow's, kept in sync with the selected brand by
+   applyBrandTheme()). The title
+   and logo sit in the upper portion (pushed down toward the vertical
+   middle — the "horizon" — by .home-hero-top's margin-top below rather
+   than sitting flush against the top edge), and the two action buttons
+   are pinned toward the bottom via margin-top: auto on .home-actions,
+   lifted slightly off the very bottom edge by its own margin-bottom. */
+.home-hero {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: var(--chrome);
+  color: #ffffff;
+  padding: 48px 24px calc(32px + env(safe-area-inset-bottom));
+  padding-left: max(24px, env(safe-area-inset-left));
+  padding-right: max(24px, env(safe-area-inset-right));
+}
+
+.home-hero-top {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  text-align: center;
+  margin-top: 96px;
+}
+
+.home-title {
+  margin: 0;
+  font-size: 1.9rem;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+}
+
+/* Sized by height only (not a fixed square) so the white card behind the
+   logo takes on the logo's own aspect ratio — proportionately wide for
+   Midwest Seed Genetics' wide rectangular logo, staying square for NC+'s
+   square one — instead of one fixed box letterboxing whichever logo
+   isn't square. */
+.home-logo {
+  height: 116px;
+  width: auto;
+  max-width: 100%;
+  object-fit: contain;
+  border-radius: 16px;
+  background: #ffffff;
+  padding: 14px 18px;
+}
+
+/* Crow's Home Screen logo, per explicit request: a white CIRCLE behind
+   the rooster-mark/wordmark instead of the white rounded-rectangle
+   "card" every other brand uses above. See plotChooser.js's homeLogo()
+   for why this is a plain wrapper <div> (overflow: hidden doing the
+   actual circular clip) around an ordinary centered <img>, rather than
+   border-radius applied straight to the <img> the way the rest of this
+   file's badges/cards do it — that direct approach silently lost some
+   of the wordmark's finer strokes to a browser rendering quirk. Sized
+   noticeably bigger (140px) than the 116px every other brand's card
+   uses, with generous padding around the 100px inner image, so there's
+   comfortable white margin on every side and nothing sits anywhere near
+   the circle's own edge. */
+.home-logo-circle {
+  width: 140px;
+  height: 140px;
+  padding: 0;
+  border-radius: 50%;
+  background: #ffffff;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.home-logo-circle-img {
+  display: block;
+  width: 100px;
+  height: 100px;
+  object-fit: contain;
+}
+
+.home-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 100%;
+  max-width: 360px;
+  margin-top: auto;
+  margin-bottom: 28px;
+}
+
+.home-btn {
+  min-height: 52px;
+  padding: 14px 20px;
+  border-radius: 12px;
+  font-weight: 700;
+  font-size: 1.05rem;
+  cursor: pointer;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.home-btn-primary {
+  background: #ffffff;
+  color: var(--chrome);
+  border: none;
+}
+
+.home-btn-secondary {
+  background: transparent;
+  color: #ffffff;
+  border: 1.5px solid rgba(255, 255, 255, 0.6);
+}
+
+.home-btn-badge {
+  background: rgba(255, 255, 255, 0.18);
+  color: #ffffff;
+  font-size: 0.8rem;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 2px 10px;
+}
+
+.home-btn-primary .home-btn-badge {
+  background: rgba(0, 0, 0, 0.08);
+  color: var(--chrome);
+}
+
+/* Informational, not an action — deliberately lighter-weight than
+   home-btn-primary/-secondary so it doesn't compete with "Enter a New
+   Plot" for attention, while keeping the same tap-target size. */
+.home-btn-ghost {
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.85);
+  text-decoration: underline;
+  font-size: 0.95rem;
+  margin-top: 2px;
+}
+
+/* ---------- chooser rows / menu rows ---------- */
+
+.chooser-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.chooser-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  min-height: 44px;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+}
+
+
+.chooser-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.chooser-row-title {
+  font-weight: 700;
+}
+
+.chooser-row-subtitle {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+
+
+.chooser-row-chevron {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 1.2rem;
+  display: inline-block;
+  transition: transform 0.15s ease;
+}
+
+
+/* Rotated to point downward while the panel it controls is expanded
+   (see plotSummary.js's headerCard toggle) — the same "›" glyph used
+   everywhere else for "tap to go somewhere" just rotates in place
+   rather than needing a second glyph for the expanded state. */
+.chooser-row-chevron-expanded {
+  transform: rotate(90deg);
+}
+
+/* ---------- wheel select ---------- */
+
+.wheel-row {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.wheel-row-disabled {
+  opacity: 0.6;
+}
+
+.wheel-row-header {
+  width: 100%;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: none;
+  cursor: pointer;
+  text-align: left;
+}
+
+.wheel-row-header:disabled {
+  cursor: not-allowed;
+}
+
+.wheel-row-label {
+  font-weight: 600;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  flex-shrink: 0;
+}
+
+.wheel-row-value {
+  flex: 1;
+  text-align: right;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wheel-row-placeholder {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.wheel-chevron {
+  color: var(--text-muted);
+  transition: transform 0.15s ease;
+}
+
+.wheel-chevron-open {
+  transform: rotate(180deg);
+}
+
+.wheel-disabled-reason {
+  margin: 0;
+  padding: 0 12px 10px;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.wheel-panel {
+  border-top: 1px solid var(--border);
+}
+
+/* A plain top-anchored option list: it takes its natural height for
+   short lists (no scrolling, nothing reserved above the first option)
+   and caps out at roughly 4 rows for long lists, scrolling normally from
+   there. There is deliberately no scroll-snap and no spacer element —
+   both were part of an earlier "always-centered wheel picker" design
+   that required blank filler space above/below the options to let the
+   first/last item reach the center of the viewport, and that filler is
+   what showed up as a persistent blank line at the top of the list. */
+.wheel-scroll {
+  max-height: 176px;
+  overflow-y: auto;
+  position: relative;
+  background: var(--card-bg);
+}
+
+.wheel-option {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 14px;
+  text-align: center;
+  cursor: pointer;
+  border-top: 1px solid transparent;
+  border-bottom: 1px solid transparent;
+}
+
+.wheel-option:hover {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.wheel-option-selected {
+  font-weight: 700;
+  color: var(--accent-strong);
+  border-top-color: var(--accent-strong);
+  border-bottom-color: var(--accent-strong);
+}
+
+.wheel-option-add-new {
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+/* ---------- modal ---------- */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 100;
+}
+
+.modal-card {
+  background: var(--card-bg);
+  color: var(--text);
+  border-radius: 16px;
+  padding: 20px;
+  width: 100%;
+  max-width: 380px;
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+}
+
+.modal-card-large {
+  max-width: 480px;
+}
+
+.modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.modal-title {
+  margin: 0 0 8px;
+  font-size: 1.1rem;
+}
+
+.modal-message {
+  margin: 0 0 14px;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.modal-input {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  margin-bottom: 16px;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.modal-close-btn {
+  background: transparent;
+  border: none;
+  font-size: 1rem;
+  cursor: pointer;
+  color: var(--text-muted);
+  min-width: 44px;
+  min-height: 44px;
+}
+
+/* ---------- date picker ---------- */
+
+.date-picker-btn {
+  text-align: left;
+  cursor: pointer;
+  background: var(--bg);
+}
+
+.date-picker-btn-placeholder {
+  color: var(--text-muted);
+}
+
+.date-picker-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.date-picker-nav-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.date-picker-nav-btn {
+  background: transparent;
+  border: none;
+  font-size: 1.4rem;
+  min-width: 40px;
+  min-height: 40px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.date-picker-nav-btn:active {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.date-picker-month-label {
+  font-weight: 700;
+  font-size: 1rem;
+}
+
+.date-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+
+.date-picker-weekday {
+  text-align: center;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  padding: 4px 0 6px;
+}
+
+.date-picker-day {
+  min-height: 38px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  color: var(--text);
+}
+
+.date-picker-day:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.date-picker-day-empty {
+  cursor: default;
+}
+
+.date-picker-day-today {
+  font-weight: 700;
+  color: var(--accent-strong);
+}
+
+.date-picker-day-selected {
+  background: var(--accent-strong);
+  color: #ffffff;
+  font-weight: 700;
+}
+
+.date-picker-footer-row {
+  display: flex;
+  justify-content: space-between;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+  margin-top: 2px;
+}
+
+.date-picker-footer-btn {
+  background: transparent;
+  border: none;
+  color: var(--accent-strong);
+  font-weight: 600;
+  font-size: 0.88rem;
+  padding: 8px 6px;
+  min-height: 36px;
+  cursor: pointer;
+}
+
+.date-picker-clear-btn {
+  color: var(--danger);
+}
+
+/* ---------- searchable list picker ---------- */
+
+.search-list-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.search-list-input {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+}
+
+.search-list {
+  max-height: 50vh;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.search-list-option {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  padding: 10px 14px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+}
+
+.search-list-option:last-child {
+  border-bottom: none;
+}
+
+.search-list-option:hover {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.search-list-option-selected {
+  font-weight: 700;
+  color: var(--accent-strong);
+}
+
+.search-list-add-new {
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+/* Static caption under the search input on fields that support adding a
+   new value (see searchListPicker.js's addNewHint) — always visible,
+   rather than only shown after tapping a since-removed "+ Add New…" row's
+   popup, so context like Hybrid's brand-scoping note is never hidden. */
+.search-list-add-new-hint {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin: -4px 0 0;
+}
+
+.search-list-empty {
+  padding: 14px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+/* ---------- toast ---------- */
+
+.toast-container {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: calc(16px + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  z-index: 200;
+  pointer-events: none;
+  padding: 0 16px;
+}
+
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 480px;
+  width: 100%;
+  background: #1c1c1e;
+  color: #ffffff;
+  border-radius: 12px;
+  padding: 12px 14px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+}
+
+.toast-error {
+  background: var(--danger);
+}
+
+.toast-success {
+  background: var(--accent);
+}
+
+.toast-message {
+  flex: 1;
+  font-size: 0.9rem;
+  line-height: 1.35;
+}
+
+.toast-close-btn {
+  background: transparent;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  min-width: 32px;
+  min-height: 32px;
+  font-size: 0.9rem;
+}
+
+/* ---------- service worker update banner ---------- */
+
+/* Same gold/dark-text "pay attention" pair as .badge-current, rather
+   than the app's usual green chrome or the toast's near-black — this is
+   the one banner in the app that's worth standing out from everything
+   else on screen, since it sits above every screen indefinitely (not a
+   few seconds like a toast) until the person acts on it. Fixed above
+   even the top bar (z-index higher than .modal-overlay/.toast-container
+   — see updateBanner.js's comment on why this can't just wait quietly)
+   so it's visible and tappable from any screen at any time. */
+.update-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 400;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: calc(10px + env(safe-area-inset-top)) 16px 10px;
+  background: var(--highlight);
+  color: #16241c;
+  font-weight: 700;
+  font-size: 0.85rem;
+  text-align: center;
+  cursor: pointer;
+  border: none;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+}
+
+/* ---------- entries / saved plots lists ---------- */
+
+.entries-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Swipe-to-delete wrapper: the red delete panel lives underneath,
+   revealed as .entry-row (the opaque foreground layer) slides left. */
+.entry-row-swipe-wrap {
+  position: relative;
+  overflow: hidden;
+  border-radius: 12px;
+}
+
+/* Applied to a row's swipe-wrap for as long as it's being long-press- or
+   click-dragged to a new position (see entriesList.js's startDrag()).
+   overflow reverts to visible so the lift shadow below isn't clipped by
+   the same wrap that normally hides the swipe-delete panel — a drag and
+   an open swipe panel never happen at the same time (starting a drag
+   closes any open swipe first), so there's nothing left to clip anyway. */
+.entry-row-swipe-wrap.entry-row-dragging {
+  overflow: visible;
+  z-index: 5;
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.28);
+  border-radius: 12px;
+}
+
+.entry-row {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 6px 6px 6px 12px;
+  /* Let the page scroll vertically as normal; only a clearly-horizontal
+     drag (decided in JS before calling preventDefault()) hijacks the
+     gesture to slide the row instead. */
+  touch-action: pan-y;
+}
+
+.entry-row-swipe-delete {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 84px;
+  z-index: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--danger);
+  border-radius: 12px;
+}
+
+.entry-row-swipe-delete-btn {
+  width: 100%;
+  height: 100%;
+  border: none;
+  background: transparent;
+  color: #ffffff;
+  font-weight: 700;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+.entry-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  padding: 10px 4px;
+  min-height: 44px;
+}
+
+.entry-row-number {
+  font-weight: 700;
+  color: var(--text-muted);
+  width: 22px;
+  flex-shrink: 0;
+}
+
+.entry-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.entry-row-title {
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.entry-row-subtitle {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.entry-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.icon-btn {
+  min-width: 40px;
+  min-height: 40px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 1rem;
+  color: var(--text-muted);
+}
+
+.icon-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.icon-btn:not(:disabled):active {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.icon-btn-danger {
+  color: var(--danger);
+}
+
+
+.badge-current {
+  background: var(--highlight);
+  color: #16241c;
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  border-radius: 999px;
+  padding: 2px 8px;
+  letter-spacing: 0.02em;
+}
+
+.badge-transferred {
+  background: var(--accent-light);
+  color: #ffffff;
+  font-size: 0.68rem;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 2px 8px;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+/* The sample Demo Plot's badge on Saved Plots (see demoPlot.js) — a
+   neutral gray, deliberately distinct from the gold "Current" badge and
+   the green "From {name}" transferred badge, so it reads as
+   informational rather than a status to act on. */
+.badge-demo {
+  background: #6b7280;
+  color: #ffffff;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  border-radius: 999px;
+  padding: 2px 8px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.saved-plots-search {
+  margin-bottom: 4px;
+}
+
+.preview-owner-banner {
+  background: var(--highlight);
+  color: #16241c;
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-align: center;
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.admin-plot-row {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+
+/* The admin plot row renders the cooperator name span and the
+   "FormID • n entries" span inline with nothing between them, which
+   read as one run-together string ("Rings StarAPP00028") — per explicit
+   request, a small gap separates them. (The same two span classes are
+   also used by Plot Summary's Average-by-Brand rows, which lay out as
+   flex space-between and don't need this — hence scoping to
+   .admin-plot-row.) */
+.admin-plot-row .brand-average-value {
+  margin-left: 8px;
+}
+
+.admin-plot-row:active {
+  opacity: 0.7;
+}
+
+/* All Plots (Admin) card header: name + email stacked on the left, a "☰"
+   details button pinned to the far right — replaces the old plain
+   single-line .section-header text for this screen only (still uses the
+   same base .section-header background/padding, just as a flex row
+   instead of a bare text node). */
+.admin-user-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.admin-user-header-text {
+  min-width: 0;
+}
+
+.admin-user-header-name {
+  margin: 0;
+  color: #ffffff;
+  font-weight: 700;
+  font-size: 0.95rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.admin-user-header-email {
+  margin: 2px 0 0;
+  color: rgba(255, 255, 255, 0.85);
+  font-weight: 500;
+  font-size: 0.78rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.admin-user-menu-btn {
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  color: #ffffff;
+  font-size: 1.2rem;
+  min-width: 40px;
+  min-height: 40px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.admin-user-menu-btn:active {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+/* The "☰" button's detail popover (showCustomModal) body — First Name,
+   Last Name, Email, Phone for that one user. */
+.admin-user-detail-row {
+  margin: 0 0 10px;
+  font-size: 0.95rem;
+}
+
+.admin-user-detail-row:last-child {
+  margin-bottom: 0;
+}
+
+/* ---------- GPS / location status ---------- */
+
+.location-status {
+  margin: 8px 0 0;
+  font-size: 0.85rem;
+  min-height: 1.2em;
+}
+
+.location-status-requesting,
+.location-status-locating {
+  color: var(--text-muted);
+}
+
+.location-status-success {
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+.location-status-failure {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+/* ---------- zip lookup ---------- */
+
+.field-status {
+  margin: 6px 0 0;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.field-status-active {
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+.zip-choice-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.zip-choice-btn {
+  min-height: 36px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--accent-strong);
+  border: 1.5px solid var(--accent-strong);
+  font-weight: 700;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.zip-choice-btn-selected {
+  background: var(--accent);
+  color: #ffffff;
+  border-color: var(--accent);
+}
+
+/* ---------- plot summary ---------- */
+
+.segmented-control {
+  display: flex;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 3px;
+  gap: 3px;
+}
+
+.segmented-btn {
+  flex: 1;
+  min-height: 40px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.segmented-btn-active {
+  background: var(--accent);
+  color: #ffffff;
+}
+
+/* Brand View selector (Settings) shows each brand's logo instead of its
+   name — a neutral card background + accent ring for the selected state
+   instead of a solid accent fill, so every brand's logo stays legible
+   (a colored fill behind a logo that already carries its own brand
+   colors would fight it) regardless of which one is active. */
+.brand-view-btn {
+  min-height: 60px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+}
+
+.brand-view-btn.segmented-btn-active {
+  background: var(--card-bg);
+  box-shadow: inset 0 0 0 2px var(--accent-strong);
+}
+
+.brand-view-logo {
+  max-height: 38px;
+  max-width: 100%;
+  object-fit: contain;
+}
+
+.summary-header-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+/* Bigger than the standard .chooser-row-chevron (1.2rem) used for plain
+   navigation rows elsewhere (workspaceMenu.js etc.) — this one needed to
+   stand out more on a mobile device since the whole header card doubles
+   as an expand/collapse control, not just a "go somewhere" row. Scoped to
+   .summary-header-card specifically rather than changing
+   .chooser-row-chevron itself, so unrelated navigation chevrons app-wide
+   are untouched. */
+.summary-header-card .chooser-row-chevron {
+  font-size: 1.7rem;
+}
+
+/* The header card is a <button> (see plotSummary.js) so the whole thing
+   is tappable to expand/collapse the Plot Details recap below it —
+   reset the native button chrome .card's own background/border/padding
+   still supplies, since a <button> doesn't inherit width/text-align/font
+   the way a <section> would. */
+button.summary-header-card {
+  width: 100%;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+/* While expanded, flatten the facing corners of the header card and the
+   details panel below it so the two read as one connected unit (see
+   .plot-details-summary-panel's negative margin-top, which pulls them
+   flush). */
+.summary-header-card-expanded {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.plot-details-summary-panel-expanded {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+.summary-header-logo {
+  width: 52px;
+  height: 52px;
+  object-fit: contain;
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 4px;
+  flex-shrink: 0;
+}
+
+.summary-header-text {
+  min-width: 0;
+}
+
+.summary-header-name {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 800;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.summary-header-subtitle {
+  margin: 2px 0 0;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+/* Read-only recap of Plot Details, expanded/collapsed by tapping the
+   header card above it (see plotSummary.js) — negative margin-top pulls
+   it flush against the header card above so the two read as one
+   connected unit rather than two separate cards with a gap. */
+.plot-details-summary-panel {
+  margin-top: -8px;
+}
+
+.plot-details-summary-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.9rem;
+}
+
+.plot-details-summary-row:last-of-type {
+  border-bottom: none;
+}
+
+.plot-details-summary-label {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.plot-details-summary-value {
+  text-align: right;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.plot-details-summary-edit-btn {
+  margin-top: 14px;
+}
+
+.summary-stats {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.summary-stat {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  background: var(--bg);
+  border-radius: 10px;
+  padding: 10px 6px;
+}
+
+.summary-stat-value {
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: var(--accent-strong);
+}
+
+.summary-stat-label {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.brand-average-header {
+  margin: 4px 0 8px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+/* ---------- box-and-whisker (Dry Yield distribution) ---------- */
+
+.box-plot-section {
+  margin-bottom: 12px;
+}
+
+.box-plot-svg {
+  display: block;
+  width: 100%;
+  height: 48px;
+}
+
+.box-plot-line {
+  stroke-linecap: round;
+}
+
+.box-plot-whisker {
+  stroke: var(--text-muted);
+  stroke-width: 1.5;
+}
+
+.box-plot-cap {
+  stroke: var(--text-muted);
+  stroke-width: 1.5;
+}
+
+.box-plot-box {
+  fill: var(--accent-strong);
+  fill-opacity: 0.22;
+  stroke: var(--accent-strong);
+  stroke-width: 1.5;
+}
+
+/* NC+'s box uses its chrome blue (the same blue as its top bar and Home
+   Screen) instead of its saturated red accent — median/mean below stay
+   on the regular accent color, and fill-opacity/stroke-width above are
+   inherited unchanged, so only the box's own color differs. */
+[data-brand="ncPlus"] .box-plot-box {
+  fill: var(--chrome);
+  stroke: var(--chrome);
+}
+
+.box-plot-median {
+  stroke: var(--accent-strong);
+  stroke-width: 2.5;
+}
+
+.box-plot-mean {
+  fill: var(--card-bg);
+  stroke: var(--accent-strong);
+  stroke-width: 1.5;
+}
+
+.box-plot-caption {
+  margin: 2px 0 0;
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+/* ---------- Yield by Position / Moisture by Position cards ---------- */
+
+.entry-bar-svg {
+  display: block;
+  width: 100%;
+  height: 96px;
+}
+
+.entry-bar-axis-line {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.entry-bar-axis-label {
+  fill: var(--text-muted);
+  font-size: 8px;
+}
+
+/* Fixed Midwest gold regardless of brand — per explicit request, both
+   entry-position bar charts now use one fixed color each across all 3
+   Brand Views instead of following the active brand's own accent (the
+   box-and-whisker chart right above them still does that; only these two
+   bar charts changed). Matches Midwest's own `highlight` brand color
+   (#FEBE10 — see BRANDS.midwestSeedGenetics.highlight in brand.js) and
+   the PDF export's matching YIELD_BAR_RGB constant. */
+.entry-bar-yield {
+  fill: #febe10;
+}
+
+/* Fixed NC+ blue regardless of brand — per explicit request. Matches
+   NC+'s own `chrome` brand color (#215AA8 — see
+   BRANDS.ncPlus.chrome in brand.js) and the PDF export's matching
+   MOISTURE_BAR_RGB constant. */
+.entry-bar-moisture {
+  fill: #215aa8;
+}
+
+/* Least-squares trendline overlay (see computeLinearTrend() in
+   plotSummary.js) — a neutral ink color (not either bar's own hue) and
+   dashed, so it reads as a statistical overlay on top of the bars rather
+   than a 3rd data series. */
+.entry-bar-trend-line {
+  stroke: var(--text);
+  stroke-width: 1.75;
+  stroke-dasharray: 4 3;
+  stroke-linecap: round;
+}
+
+.entry-bar-trend-caption {
+  margin-top: 2px;
+  font-weight: 600;
+}
+
+.entry-bar-trend-disclaimer {
+  margin: 2px 0 0;
+  font-size: 0.68rem;
+  font-style: italic;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.brand-average-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.brand-average-block {
+  padding: 4px 0 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.brand-average-block:last-child {
+  border-bottom: none;
+  padding-bottom: 4px;
+}
+
+.brand-average-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 0.88rem;
+  padding: 4px 0;
+}
+
+.brand-average-name {
+  font-weight: 600;
+}
+
+.brand-average-value {
+  color: var(--text-muted);
+}
+
+.ranked-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ranked-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.rank-badge {
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 0.85rem;
+  color: #ffffff;
+}
+
+/* Badge color reflects dry-yield statistical significance vs. the trial
+   mean rather than rank position — see significanceBadgeClass() in
+   plotSummary.js. Text color is picked per-fill so the numeral always
+   clears contrast against its background (green is dark enough for white
+   numerals; the light-gray and yellow fills need dark ink instead — see
+   the dataviz skill's "label inside a colored fill" rule). */
+.rank-badge-sig-positive {
+  background: #0ca30c;
+  color: #ffffff;
+}
+
+.rank-badge-sig-negative {
+  background: #fab219;
+  color: #1a1a19;
+}
+
+.rank-badge-sig-neutral {
+  background: #d8d7d1;
+  color: #1a1a19;
+}
+
+.significance-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin: -4px 0 10px;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.significance-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.significance-swatch {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.significance-swatch-positive {
+  background: #0ca30c;
+}
+
+.significance-swatch-negative {
+  background: #fab219;
+}
+
+.significance-swatch-neutral {
+  background: #d8d7d1;
+  border: 1px solid var(--border);
+}
+
+.ranked-row-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.ranked-row-title {
+  margin: 0;
+  font-weight: 700;
+}
+
+.ranked-row-moisture {
+  margin: 2px 0 0;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+/* Badge column: the colored rank badge with "Entry n" — the entry's
+   original plot/planting position — stacked directly beneath it, per
+   explicit request (no parentheses, per follow-up). The text
+   deliberately matches .ranked-row-moisture above exactly (same size,
+   color, inherited font). The 7px gap (widened from an initial 2px,
+   per the same follow-up) keeps the badge and the label from reading
+   as one cramped unit and balances the column vertically. */
+.ranked-row-badge-col {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+}
+
+.ranked-row-entry-pos {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.ranked-row-comment {
+  margin: 4px 0 0;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.ranked-row-value {
+  flex-shrink: 0;
+  font-weight: 800;
+  color: var(--accent-strong);
+  white-space: nowrap;
+}
+
+
+.share-menu-panel {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 6px);
+  background: var(--card-bg);
+  color: var(--text);
+  border-radius: 12px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  z-index: 30;
+}
+
+.share-menu-item {
+  min-height: 44px;
+  padding: 12px 16px;
+  background: transparent;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+  font-size: 0.88rem;
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+}
+
+.share-menu-item:last-child {
+  border-bottom: none;
+}
+
+.share-menu-item:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+/* Share This Plot now opens as a centered modal (see plotSummary.js's
+   openShareModal()) instead of a below-button dropdown — this override
+   resets the panel's positioning so it lays out normally inside the
+   modal card rather than as an absolutely-positioned popover. */
+.share-menu-panel-modal {
+  position: static;
+  box-shadow: none;
+  border: 1px solid var(--border);
+  margin-top: 4px;
+}
+
+/* ---------- Quick Start Guide (quickStart.js) ---------- */
+
+.quick-start-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.quick-start-step {
+  display: flex;
+  gap: 14px;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+
+.quick-start-step-number {
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #ffffff;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.quick-start-step-text {
+  min-width: 0;
+}
+
+.quick-start-step-title {
+  margin: 0 0 4px;
+  font-weight: 700;
+}
+
+.quick-start-step-body {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.92rem;
+  line-height: 1.45;
+}
+
+.quick-start-step-tip {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  background: var(--highlight);
+  color: #16241c;
+  border-radius: 8px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.quick-start-more-help {
+  margin-top: 18px;
+  text-align: center;
+}
+
+/* ---------- Help screen (help.js) ---------- */
+
+.help-intro-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.help-section {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+
+.help-section-title {
+  padding: 14px 16px;
+  font-weight: 700;
+  cursor: pointer;
+  list-style: none;
+}
+
+/* Custom disclosure arrow instead of the browser's default marker, so it
+   matches the app's own chevrons (chooser-row-chevron) rather than
+   looking like a stray bullet — ::-webkit-marker/::marker are both
+   needed since only one applies depending on the browser. */
+.help-section-title::-webkit-details-marker {
+  display: none;
+}
+
+.help-section-title::marker {
+  content: "";
+}
+
+.help-section-title::after {
+  content: "›";
+  float: right;
+  color: var(--text-muted);
+  transform: rotate(90deg);
+  transition: transform 0.15s ease;
+}
+
+.help-section[open] .help-section-title::after {
+  transform: rotate(270deg);
+}
+
+.help-section-body {
+  padding: 0 16px 16px;
+}
+
+.help-p {
+  margin: 0 0 10px;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.help-p:last-child {
+  margin-bottom: 0;
+}
+
+.help-list {
+  margin: 0 0 10px;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  line-height: 1.45;
+}
+
+.help-subheading {
+  margin: 14px 0 6px;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--accent-strong);
+}
+
+.help-subheading:first-child {
+  margin-top: 0;
+}
+
+.help-link {
+  color: var(--accent-strong);
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+.help-contact-row {
+  font-size: 1rem;
+}
+
+/* ---------- Settings > Admin: Hybrid Catalog split uploads ---------- */
+
+/* Same stacked-button rhythm as the Account card right above (see
+   .account-card's gap) — per explicit request, the two upload buttons
+   ("Upload Company Hybrids" / "Upload Alt. Variety Hybrids") get the
+   same breathing room as every other button stack on this screen. */
+.hybrid-catalog-upload-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+/* The section's own flex gap handles all spacing — strip the
+   field-notes' default top margin so the status line and the
+   which-file-goes-where note don't double up. */
+.hybrid-catalog-upload-section .field-note {
+  margin: 0;
+}
+
+/* ---------- Plot Details: top-of-screen location capture card ---------- */
+
+/* Sits above Cooperator Details (per explicit request) — one tap fills
+   location + soil type; the note under the button explains it. */
+.location-capture-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.location-capture-note {
+  margin: 0;
+  text-align: center;
+}
+
+/* "Device Location Enabled" state (per explicit request): once a
+   location is captured, the top capture button flips from the outlined
+   secondary style to the brand's darker solid color. */
+.location-capture-btn-enabled {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+  color: #ffffff;
+}
+
+/* ---------- Plot Details: Pick Location on Map modal ---------- */
+
+.map-picker-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.map-picker-map {
+  height: 55vh;
+  min-height: 280px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #dfe7dd; /* placeholder while tiles stream in */
+}
+
+.map-picker-readout {
+  margin: 0;
+  text-align: center;
+  font-weight: 700;
+}
+
+.map-picker-hint {
+  margin: 0;
+  text-align: center;
+}
