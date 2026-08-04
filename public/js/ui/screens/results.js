@@ -386,14 +386,30 @@ const STAGE_BASIS_NOTE =
 // band. If the remaining-season envelope thins out, the three finishes
 // converge for a data reason rather than a weather reason, and the app
 // has to say so rather than let it read as agreement.
+// Both envelopes are checked, not just the projection's. The
+// whole-season one feeds the Abnormally Hot / Normal / Abnormally Cool
+// rows and the shaded band on the chart; a gap in the archive drops
+// whole years out of it silently, and the result is a narrower band that
+// looks like a confident answer instead of a thin one. The app states
+// the year count in the method card either way, but a count that has
+// actually degraded deserves to be said where the numbers are, not in a
+// footnote at the bottom.
 const MIN_TRUSTWORTHY_YEARS = 20;
 function thinEnvelopeWarning(season) {
-  const n = (season.remainingYearsUsed || []).length;
-  if (season.currentStage === null || n === 0 || n >= MIN_TRUSTWORTHY_YEARS) return null;
+  const rest = (season.remainingYearsUsed || []).length;
+  const whole = (season.yearsUsed || []).length;
+  const problems = [];
+  if (whole > 0 && whole < MIN_TRUSTWORTHY_YEARS) {
+    problems.push(`the whole-season rows come from ${whole} complete years, not ${BASELINE_YEARS}`);
+  }
+  if (season.currentStage !== null && rest > 0 && rest < MIN_TRUSTWORTHY_YEARS) {
+    problems.push(`the hot and cool finishes come from ${rest}`);
+  }
+  if (problems.length === 0) return null;
   return h(
     "p",
     { className: "gdu-verdict gdu-verdict-warn gdu-thin-envelope" },
-    `Only ${n} of the ${BASELINE_YEARS} baseline years had complete data for the rest of this season, so the hot and cool finishes are built from a thin sample. Treat the range as indicative rather than a real 10th-to-90th percentile.`
+    `Thin baseline for this location — ${problems.join(", and ")}. Percentiles off a short record are indicative, not a real 10th-to-90th. This usually means the weather archive has gaps at this grid point; a location a few miles away may have a fuller record.`
   );
 }
 

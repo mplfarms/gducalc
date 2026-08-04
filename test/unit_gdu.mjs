@@ -449,7 +449,7 @@ const catalogDoc = JSON.parse(fs.readFileSync(new URL("../public/data/hybrids.js
 
 test("the shipped catalog parses and has the expected row count", () => {
   assert.ok(Array.isArray(catalogDoc.hybrids));
-  assert.equal(catalogDoc.hybrids.length, 132);
+  assert.equal(catalogDoc.hybrids.length, 133);
 });
 
 test("every catalog row is well formed", () => {

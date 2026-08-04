@@ -221,7 +221,7 @@ async function main() {
   // ---- built-in hybrid list ------------------------------------------
   await page.waitForSelector(".gdu-pick-hybrid-btn:not([disabled])", { timeout: 10000 });
   const pickLabel = await page.locator(".gdu-pick-hybrid-btn").textContent();
-  check("the hybrid list loads and reports its size", () => assert.match(pickLabel, /Choose from Hybrid List \(132\)/));
+  check("the hybrid list loads and reports its size", () => assert.match(pickLabel, /Choose from Hybrid List \(133\)/));
 
   await page.locator(".gdu-pick-hybrid-btn").click();
   await page.waitForSelector(".hybrid-picker-option");
@@ -232,7 +232,7 @@ async function main() {
     // Row meta reads "<rm> day · ...", so the RM sequence is readable
     // straight off the rendered list.
     const rms = pickerRows.map((t) => Number((t.match(/(\d+) day/) || [])[1])).filter(Number.isFinite);
-    assert.equal(rms.length, 132);
+    assert.equal(rms.length, 133);
     for (let i = 1; i < rms.length; i++) assert.ok(rms[i] >= rms[i - 1], `RM out of order at row ${i}: ${rms[i - 1]} then ${rms[i]}`);
   });
   if (SHOTS) await page.screenshot({ path: path.join(SHOT_DIR, "06-hybrid-picker.png") });
@@ -328,7 +328,7 @@ async function main() {
   let resolvedText = await page.locator(".gdu-resolved-note").textContent();
   check("black layer is estimated from an entered silk rating", () => {
     assert.match(resolvedText, /estimated from GDUs to silk/);
-    assert.match(resolvedText, /2,580 GDU/); // 2.3416*1290 - 440.73 = 2579.9
+    assert.match(resolvedText, /2,581 GDU/); // 2.3519*1290 - 452.57 = 2581.4
   });
 
   await page.fill('input[aria-label="GDUs to silk"]', "");
@@ -337,7 +337,7 @@ async function main() {
   resolvedText = await page.locator(".gdu-resolved-note").textContent();
   check("silk is estimated from an entered black layer rating", () => {
     assert.match(resolvedText, /estimated from GDUs to black layer/);
-    assert.match(resolvedText, /1,299 GDU/); // 0.3638*2620 + 345.58 = 1298.7
+    assert.match(resolvedText, /1,298 GDU/); // 0.3623*2620 + 348.90 = 1298.1
   });
 
   await page.fill('input[aria-label="GDUs to black layer"]', "");
@@ -346,8 +346,8 @@ async function main() {
   resolvedText = await page.locator(".gdu-resolved-note").textContent();
   check("both are estimated from RM alone", () => {
     assert.match(resolvedText, /estimated from 105 day RM/);
-    assert.match(resolvedText, /1,276 GDU/); // 8.1761*105 + 417.37 = 1276.0
-    assert.match(resolvedText, /2,554 GDU/); // 21.479*105 + 298.89 = 2554.2
+    assert.match(resolvedText, /1,276 GDU/); // 8.1765*105 + 417.33 = 1276.0
+    assert.match(resolvedText, /2,555 GDU/); // 21.5603*105 + 291.38 = 2555.2
   });
   const estTags = await page.locator(".gdu-tag-estimated").count();
   check("both estimated values carry an est. tag", () => assert.equal(estTags, 2));

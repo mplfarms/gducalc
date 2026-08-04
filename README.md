@@ -1,7 +1,7 @@
-# GDU Calculator v2.1 (Beta)
+# GDU Calculator v2.3 (Beta)
 
 A hybrid GDU calculator for corn: set a field location, a planting date, and a
-hybrid (132 built in, or type your own numbers — any one of GDUs to silk, GDUs to
+hybrid (133 built in, or type your own numbers — any one of GDUs to silk, GDUs to
 black layer, or a relative maturity is enough), and get predicted stage dates for
 this season plus last year, a normal year, an abnormally hot year, and an
 abnormally cool year — with a frost-risk check on the end.
@@ -156,6 +156,33 @@ It is deliberately **not** built by summing "normal daily rates": percentiles
 don't add, and stacking 90th-percentile days would produce a season hotter than
 any 90th-percentile season on record.
 
+### Why there is exactly one weather source
+
+Open-Meteo is the only service the app calls, and that is a decision rather than
+an oversight. NDAWN, the South Dakota and Nebraska mesonets, Wisconet, UW
+AgWeather and the NOAA station networks were all evaluated as additions. The
+findings:
+
+* **NDAWN, SD Mesonet, Nebraska Mesonet and UW AgWeather send no CORS header**,
+  so a static site cannot call them at all without standing up a proxy — which
+  is a server to run, monitor and pay for.
+* **SD Mesonet and Nebraska Mesonet explicitly prohibit** automated collection,
+  redistribution and commercial use in their terms. That is disqualifying on its
+  own, regardless of the technical path.
+* **Weather Underground** is largely uncalibrated personal weather stations with
+  no siting standard, and its API is behind a paid tier. Wrong input for a
+  number growers make decisions on.
+* **Iowa Environmental Mesonet and RCC-ACIS are genuinely usable** — CORS-open,
+  no key, deep history, and IEM permits commercial use in writing. They are the
+  right answer *if* a second source is ever added. IEM asks not to be called
+  from high-traffic sites, so it would need aggressive caching.
+
+Every added source is another way for the app to fail in front of a customer,
+and GDU accumulation — the thing this app exists to compute — already validates
+to within about 1% of the nearest thermometer (see Accuracy below). The
+measured weakness is frost, and it is disclosed on screen rather than papered
+over.
+
 **Frost.** For each of the 30 years the app finds the first day at or below 28 °F
 (and 32 °F) after Aug 1. It reports the median, the 10th percentile ("1 year in
 10 froze by this date"), and the earliest on record. The verdict is scored against
@@ -164,7 +191,7 @@ the median freeze date gets caught one year in two, which is not a pass.
 
 ## The hybrid list
 
-132 hybrids ship in `public/data/hybrids.json`, built from the grower-supplied
+133 hybrids ship in `public/data/hybrids.json`, built from the grower-supplied
 GDU worksheet (`data-src-gdu-worksheet.xlsx`, also flattened to
 `data-src-hybrids.csv`) and **reproduced exactly as supplied**. Nothing derives,
 smooths or sanity-corrects a GDU rating from relative maturity.
@@ -175,6 +202,8 @@ was an exact duplicate of its `TRERIB` counterpart — same RM, same silk, same
 black layer — so they added nothing to pick between while double-weighting two
 hybrids in the fit), and `13-22 Conv` was normalised to `CONV` so every trait
 suffix is upper case. A unit test now asserts both rules, plus the sort order.
+`14-36 PCE` (114 day, 1,350 silk / 2,850 black layer) was then added, taking the
+list to 133.
 
 **The estimator is refit on every one of these changes**, because it is fitted
 *on* this data: silk-from-RM's slope moved from 7.55 to 8.18 across the big
@@ -252,32 +281,32 @@ the alert; the number just has to be legible.
 
 Any **one** of GDUs to silk, GDUs to black layer, or relative maturity is enough
 to calculate. Whatever is missing is filled in by ordinary least squares fitted on
-all 132 hybrids in the built-in list, exactly as supplied — nothing trimmed to
+all 133 hybrids in the built-in list, exactly as supplied — nothing trimmed to
 flatter the fit, 89-58 included.
 
 Errors below are **leave-one-out**: each hybrid was predicted by a model fitted on
-the other 131 and never on itself. In-sample error reads about 10% lower and would
+the other 132 and never on itself. In-sample error reads about 10% lower and would
 be measuring the fit's memory rather than its accuracy.
 
 | Estimate | median err | p90 | worst | R² |
 |---|---|---|---|---|
-| silk from black layer | 25 GDU | 59 | 115 | 0.852 |
-| black layer from silk | 44 GDU | 171 | 266 | 0.852 |
-| silk from RM | 30 GDU | 58 | 187 | 0.810 |
-| black layer from RM | 47 GDU | 147 | 389 | 0.868 |
+| silk from black layer | 25 GDU | 58 | 116 | 0.852 |
+| black layer from silk | 46 GDU | 169 | 264 | 0.852 |
+| silk from RM | 29 GDU | 58 | 187 | 0.811 |
+| black layer from RM | 47 GDU | 146 | 389 | 0.869 |
 
 **A real GDU number is preferred over RM**, though the refit on the bigger list
 narrowed the case for it and that's worth saying plainly. Silk from a known black
-layer (25 GDU) still clearly beats silk from RM (30). For black layer the two are
-close — 44 from a known silk against 47 from RM — where on the old 72-hybrid
+layer (25 GDU) still clearly beats silk from RM (29). For black layer the two are
+close — 46 from a known silk against 47 from RM — where on the old 72-hybrid
 list silk was the clear winner. The preference stands on the grounds that a
 paired GDU rating is specific to *that* hybrid while RM only locates it in a
 maturity band holding a 200-plus GDU spread, not on a meaningful accuracy gap.
 `resolve()` in `core/hybridEstimate.js` enforces the precedence and a unit test
 pins it.
 
-**RM is the weakest input.** R² is 0.868 for black layer and the worst hybrid in
-the list — 89-58 SSPRORIB, rated 2,592 where the RM-89 trend says 2,211 — is 381
+**RM is the weakest input.** R² is 0.869 for black layer and the worst hybrid in
+the list — 89-58 SSPRORIB, rated 2,592 where the RM-89 trend says 2,210 — is 382
 GDU off, roughly two and a half weeks of grain fill. It's a reasonable default
 when the tech sheet isn't at hand; it is not a substitute for it.
 

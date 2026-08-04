@@ -7,44 +7,45 @@
 // ---------------------------------------------------------------
 // Where the models come from
 // ---------------------------------------------------------------
-// Ordinary least squares fitted on all 132 hybrids in this app's own
+// Ordinary least squares fitted on all 133 hybrids in this app's own
 // list (public/data/hybrids.json), exactly as supplied — including
 // 89-58 SSPRORIB, the known RM outlier. Nothing was trimmed to make the
 // fit look better.
 //
-// Refitted twice: once when the list grew from 72 to 134 hybrids, and
-// again when the two bare-TRE entries were dropped as exact duplicates
-// of their TRERIB counterparts (identical RM, silk and black layer), so
-// those two hybrids are no longer double-weighted in the fit.
+// Refitted on every change to the list, because it is fitted ON that
+// list: 72 -> 134 on the big refresh, 134 -> 132 when the two bare-TRE
+// entries were dropped as exact duplicates of their TRERIB counterparts
+// (identical RM, silk and black layer, so they were double-weighting two
+// hybrids for nothing), and 132 -> 133 when 14-36 PCE was added.
 //
 // Quoted errors below are LEAVE-ONE-OUT: each hybrid was predicted by a
-// model fitted on the other 131 and never on itself. That is the honest
+// model fitted on the other 132 and never on itself. That is the honest
 // number. In-sample error would read roughly 10% lower and would be
 // measuring the fit's memory rather than its accuracy.
 //
 //   estimate               median   p90    worst    R2
-//   silk from black layer    25     59     115     0.852
-//   black layer from silk    44    171     266     0.852
-//   silk from RM             30     58     187     0.810
-//   black layer from RM      47    147     389     0.868
+//   silk from black layer    25     58     116     0.852
+//   black layer from silk    46    169     264     0.852
+//   silk from RM             29     58     187     0.811
+//   black layer from RM      47    146     389     0.869
 //
 // ---------------------------------------------------------------
 // Two consequences worth stating plainly
 // ---------------------------------------------------------------
 // 1. A REAL GDU NUMBER IS PREFERRED OVER RM. Silk from a known black
-//    layer (median 25 GDU off) beats silk from RM (30). For black layer
-//    the two are close — 44 from a known silk against 47 from RM — where
+//    layer (median 25 GDU off) beats silk from RM (29). For black layer
+//    the two are close — 46 from a known silk against 47 from RM — where
 //    on the old 72-hybrid list silk was the clearer winner. The preference still stands, but on the honest grounds
 //    that a paired GDU rating is specific to THAT hybrid while RM only
 //    locates it in a maturity band holding a 200+ GDU spread, not on a
 //    meaningful accuracy gap. resolve() below prefers a GDU-based
 //    estimate when one is available and falls back to RM otherwise.
 //
-// 2. RM IS A WEAK PREDICTOR OF BLACK LAYER. R² is 0.868 and the worst
+// 2. RM IS A WEAK PREDICTOR OF BLACK LAYER. R² is 0.869 and the worst
 //    leave-one-out miss in the list is 389 GDU — roughly two and a half
 //    weeks of grain fill. That miss is 89-58 SSPRORIB (RM 89), rated
-//    2,592 where the shipped RM-89 fit says 2,211, an in-sample residual
-//    of 381; held out of its own fit it lands 389 off. Both numbers are
+//    2,592 where the shipped RM-89 fit says 2,210, an in-sample residual
+//    of 382; held out of its own fit it lands 389 off. Both numbers are
 //    the same hybrid, and the leave-one-out one is what gets quoted. An RM-only estimate is a reasonable default for a
 //    hybrid whose sheet you don't have; it is not a substitute for the
 //    sheet, and the app labels every estimated value as such on every
@@ -64,7 +65,7 @@
  * real length, so a data refresh that forgets the refit fails the build
  * instead of shipping a stale accuracy claim.
  */
-export const FITTED_N = 132;
+export const FITTED_N = 133;
 
 /** RM range the models were actually fitted over. */
 export const RM_FITTED_MIN = 77;
@@ -85,10 +86,10 @@ export const BL_MAX = 4000;
 
 /** @type {Object<string, Model>} */
 export const MODELS = {
-  silkFromRm: { slope: 8.1761, intercept: 417.37, medianErr: 30, p90Err: 58, maxErr: 187 },
-  blFromRm: { slope: 21.479, intercept: 298.89, medianErr: 47, p90Err: 147, maxErr: 389 },
-  blFromSilk: { slope: 2.3416, intercept: -440.73, medianErr: 44, p90Err: 171, maxErr: 266 },
-  silkFromBl: { slope: 0.3638, intercept: 345.58, medianErr: 25, p90Err: 59, maxErr: 115 },
+  silkFromRm: { slope: 8.1765, intercept: 417.33, medianErr: 29, p90Err: 58, maxErr: 187 },
+  blFromRm: { slope: 21.5603, intercept: 291.38, medianErr: 47, p90Err: 146, maxErr: 389 },
+  blFromSilk: { slope: 2.3519, intercept: -452.57, medianErr: 46, p90Err: 169, maxErr: 264 },
+  silkFromBl: { slope: 0.3623, intercept: 348.9, medianErr: 25, p90Err: 58, maxErr: 116 },
 };
 
 function apply(model, x) {
