@@ -37,7 +37,7 @@
 //                     ink so it reads on any brand and outweighs
 //                     everything else without competing for hue
 
-import { addDays, formatShort } from "../core/dates.js";
+import { addDays, daysBetween, formatShort } from "../core/dates.js";
 
 const SERIES_STYLE = {
   current: { varName: "--gdu-current", width: 3, dash: null, label: "This season" },
@@ -129,16 +129,25 @@ function buildSvg(width, height, season, hybrid, brand) {
   // runs to December when black layer lands in September wastes two
   // thirds of its width on a flat tail and squeezes the part that
   // matters.
+  //
+  // With no hybrid there are no stages to bound it, so the window ends
+  // at the median first frost instead — which is when accumulation
+  // stops mattering to a corn crop regardless of what is planted.
   let lastInterestingOffset = Math.max(season.knownEndOffset, 0);
   for (const row of season.rows) {
     for (const o of [row.silkOffset, row.blackLayerOffset]) {
       if (o !== null && o > lastInterestingOffset) lastInterestingOffset = o;
     }
   }
+  if (!hybrid) {
+    const frostMd = season.lightFrost && season.lightFrost.medianMonthDay;
+    const frostOffset = frostMd ? daysBetween(season.plantingIso, `${season.plantingYear}-${frostMd}`) : -1;
+    if (frostOffset > lastInterestingOffset) lastInterestingOffset = frostOffset;
+  }
   const xMax = Math.min(season.seasonDays - 1, lastInterestingOffset + 12);
 
   // ---- y domain -------------------------------------------------
-  let yMax = hybrid.gduToBlackLayer;
+  let yMax = hybrid ? hybrid.gduToBlackLayer : 0;
   for (const s of series) {
     const v = s.cum[xMax] !== null && s.cum[xMax] !== undefined ? s.cum[xMax] : lastFinite(s.cum, xMax);
     if (v !== null && v > yMax) yMax = v;
@@ -154,7 +163,9 @@ function buildSvg(width, height, season, hybrid, brand) {
     height,
     viewBox: `0 0 ${width} ${height}`,
     role: "img",
-    "aria-label": `Cumulative growing degree units from planting on ${formatShort(season.plantingIso, { withYear: true })}, by scenario. Exact dates are listed in the scenario table below this chart.`,
+    "aria-label": `Cumulative growing degree units from planting on ${formatShort(season.plantingIso, { withYear: true })}, by scenario.${
+      hybrid ? " Exact dates are listed in the scenario table below this chart." : ""
+    }`,
   });
 
   // ---- y grid + labels -----------------------------------------
@@ -200,10 +211,12 @@ function buildSvg(width, height, season, hybrid, brand) {
   }
 
   // ---- stage reference lines -----------------------------------
-  for (const [value, text] of [
-    [hybrid.gduToSilk, "Silk"],
-    [hybrid.gduToBlackLayer, "Black layer"],
-  ]) {
+  for (const [value, text] of hybrid
+    ? [
+        [hybrid.gduToSilk, "Silk"],
+        [hybrid.gduToBlackLayer, "Black layer"],
+      ]
+    : []) {
     if (!Number.isFinite(value) || value <= 0 || value > yMax) continue;
     root.appendChild(svg("line", { class: "gdu-stage-line", x1: margin.left, x2: margin.left + plotW, y1: y(value), y2: y(value) }));
     const label = svg("text", { class: "gdu-stage-label", x: margin.left + 4, y: y(value) - 5 });

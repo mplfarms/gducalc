@@ -7,45 +7,52 @@
 // ---------------------------------------------------------------
 // Where the models come from
 // ---------------------------------------------------------------
-// Ordinary least squares fitted on all 72 hybrids in this app's own
+// Ordinary least squares fitted on all 134 hybrids in this app's own
 // list (public/data/hybrids.json), exactly as supplied — including
 // 89-58 SSPRORIB, the known RM outlier. Nothing was trimmed to make the
 // fit look better.
 //
+// Refitted when the list grew from 72 to 134 hybrids. The coefficients
+// moved enough that shipping the old ones against the new data would
+// have been quietly wrong — silk-from-RM's slope went from 7.55 to 8.18,
+// which is ~26 GDU at the long end of the range.
+//
 // Quoted errors below are LEAVE-ONE-OUT: each hybrid was predicted by a
-// model fitted on the other 71 and never on itself. That is the honest
+// model fitted on the other 133 and never on itself. That is the honest
 // number. In-sample error would read roughly 10% lower and would be
 // measuring the fit's memory rather than its accuracy.
 //
 //   estimate               median   p90    worst
-//   silk from black layer    19     53     102
-//   black layer from silk    40    140     276
-//   silk from RM             24     67     248
-//   black layer from RM      45    150     472
+//   silk from black layer    25     58     115
+//   black layer from silk    44    171     267
+//   silk from RM             29     58     187
+//   black layer from RM      45    146     389
 //
 // ---------------------------------------------------------------
 // Two consequences worth stating plainly
 // ---------------------------------------------------------------
-// 1. A REAL GDU NUMBER BEATS RM, always. Deriving black layer from a
-//    known silk rating (median 40 GDU off) is better than deriving it
-//    from RM (45), and deriving silk from a known black layer (19) is
-//    much better than from RM (24) — because the paired GDU number is
-//    specific to that hybrid, while RM only locates it in a maturity
-//    band that holds a 200+ GDU spread. resolve() below therefore
-//    always prefers a GDU-based estimate when one is available, and
-//    only falls back to RM when neither GDU number was given.
+// 1. A REAL GDU NUMBER IS PREFERRED OVER RM. Silk from a known black
+//    layer (median 25 GDU off) beats silk from RM (29). For black layer
+//    the two are now effectively tied — 44 from a known silk against 45
+//    from RM — where on the old 72-hybrid list silk was the clearer
+//    winner. The preference still stands, but on the honest grounds
+//    that a paired GDU rating is specific to THAT hybrid while RM only
+//    locates it in a maturity band holding a 200+ GDU spread, not on a
+//    meaningful accuracy gap. resolve() below prefers a GDU-based
+//    estimate when one is available and falls back to RM otherwise.
 //
-// 2. RM IS A WEAK PREDICTOR OF BLACK LAYER. R² is 0.83 and the worst
-//    miss in the list is 472 GDU — roughly three weeks of grain fill.
-//    42W96 TRERIB (RM 96) is rated 2,849 where the RM-96 fit says
-//    2,378. An RM-only estimate is a reasonable default for a hybrid
-//    whose sheet you don't have; it is not a substitute for the sheet,
-//    and the app labels every estimated value as such on every screen
-//    it appears on.
+// 2. RM IS A WEAK PREDICTOR OF BLACK LAYER. R² is 0.87 and the worst
+//    miss in the list is 389 GDU — roughly two and a half weeks of grain
+//    fill. 89-58 SSPRORIB (RM 89) is rated 2,592 where the RM-89 fit
+//    says 2,203. An RM-only estimate is a reasonable default for a
+//    hybrid whose sheet you don't have; it is not a substitute for the
+//    sheet, and the app labels every estimated value as such on every
+//    screen it appears on.
 //
-// A quadratic in RM was tested and rejected: it moved black-layer RMSE
-// from 88.4 to 87.7 GDU, which is not a real improvement, and it bends
-// badly outside the fitted range. Linear it is.
+// A quadratic in RM was tested and rejected on the original list: it
+// moved black-layer RMSE from 88.4 to 87.7 GDU, which is not a real
+// improvement, and it bends badly outside the fitted range. Linear it
+// is.
 
 /** RM range the models were actually fitted over. */
 export const RM_FITTED_MIN = 77;
@@ -66,10 +73,10 @@ export const BL_MAX = 4000;
 
 /** @type {Object<string, Model>} */
 export const MODELS = {
-  silkFromRm: { slope: 7.5526, intercept: 492.2, medianErr: 24, p90Err: 67, maxErr: 248 },
-  blFromRm: { slope: 20.2059, intercept: 445.9, medianErr: 45, p90Err: 150, maxErr: 472 },
-  blFromSilk: { slope: 2.3868, intercept: -507.45, medianErr: 40, p90Err: 140, maxErr: 276 },
-  silkFromBl: { slope: 0.3769, intercept: 317.65, medianErr: 19, p90Err: 53, maxErr: 102 },
+  silkFromRm: { slope: 8.1771, intercept: 417.48, medianErr: 29, p90Err: 58, maxErr: 187 },
+  blFromRm: { slope: 21.4643, intercept: 300.28, medianErr: 45, p90Err: 146, maxErr: 389 },
+  blFromSilk: { slope: 2.3396, intercept: -438.76, medianErr: 44, p90Err: 171, maxErr: 267 },
+  silkFromBl: { slope: 0.364, intercept: 345.32, medianErr: 25, p90Err: 58, maxErr: 115 },
 };
 
 function apply(model, x) {

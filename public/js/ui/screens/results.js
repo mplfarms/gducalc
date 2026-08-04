@@ -61,6 +61,7 @@ export function render(container) {
   const state = inputStore.getState();
   const hybridCheck = inputStore.validatedHybrid();
 
+  // A hybrid is optional; a location and a planting date are not.
   if (!state.location || !state.plantingIso || !hybridCheck.ok) {
     // Reachable by a stale #/results hash (a bookmark, a PWA relaunch)
     // rather than by the Calculate button.
@@ -71,7 +72,7 @@ export function render(container) {
         h("main", { className: "screen-body" }, [
           h("section", { className: "card" }, [
             h("h3", { className: "section-header" }, "Missing Inputs"),
-            h("p", {}, "Set a field location, a planting date and the hybrid's GDU ratings first."),
+            h("p", {}, "Set a field location and a planting date first."),
             h("button", { type: "button", className: "btn btn-primary btn-block", onclick: () => navigate("calculator") }, "Back to Inputs"),
           ]),
         ]),
@@ -80,7 +81,7 @@ export function render(container) {
     return;
   }
 
-  const hybrid = hybridCheck.value;
+  const hybrid = hybridCheck.value; // null when no hybrid was entered
   const body = h("main", { className: "screen-body" }, [
     headerCard(state, hybrid),
     h("section", { className: "card" }, [h("p", { className: "gdu-loading" }, "Loading 30 years of weather for this location…")]),
@@ -103,6 +104,25 @@ export function render(container) {
 }
 
 function headerCard(state, hybrid) {
+  if (!hybrid) {
+    return h("section", { className: "card" }, [
+      h("h3", { className: "section-header" }, "GDU Accumulation"),
+      h("div", { className: "plot-details-summary-row" }, [
+        h("span", { className: "plot-details-summary-label" }, "Field"),
+        h("span", { className: "plot-details-summary-value" }, state.location.label),
+      ]),
+      h("div", { className: "plot-details-summary-row" }, [
+        h("span", { className: "plot-details-summary-label" }, "Planted"),
+        h("span", { className: "plot-details-summary-value" }, formatShort(state.plantingIso, { withYear: true })),
+      ]),
+      h(
+        "p",
+        { className: "field-note" },
+        "No hybrid entered, so there are no silk or black layer dates to predict — this is the heat itself, for this location and planting date."
+      ),
+      h("button", { type: "button", className: "btn btn-secondary btn-block", onclick: () => navigate("calculator") }, "Add a Hybrid for Stage Dates"),
+    ]);
+  }
   return h("section", { className: "card" }, [
     h("h3", { className: "section-header" }, hybrid.label),
     h("div", { className: "plot-details-summary-row" }, [
@@ -185,8 +205,11 @@ async function loadAndPaint(container, body, state, hybrid) {
   const season = buildSeason({
     index,
     plantingIso: state.plantingIso,
-    gduToSilk: hybrid.gduToSilk,
-    gduToBlackLayer: hybrid.gduToBlackLayer,
+    // Null targets simply produce rows with no crossings — see
+    // offsetAtTarget, which returns null for a non-finite target. The
+    // rows aren't rendered without a hybrid anyway.
+    gduToSilk: hybrid ? hybrid.gduToSilk : null,
+    gduToBlackLayer: hybrid ? hybrid.gduToBlackLayer : null,
     lastKnownIso,
     lastObservedIso,
   });
@@ -195,23 +218,26 @@ async function loadAndPaint(container, body, state, hybrid) {
   // season exists. The stage list and its scenario label come from the
   // same helper the on-screen stage chart uses, so the PDF can never
   // disagree with what the user is looking at.
-  const forShare = stagesForView(season, hybrid);
+  const forShare = hybrid ? stagesForView(season, hybrid) : null;
   shareContext = {
     season,
     hybrid,
     location: state.location,
-    rows: season.rows,
+    rows: hybrid ? season.rows : [],
     brand: getBrand(brandStore.getState().selectedBrand),
-    stages: forShare.dated,
-    scenarioLabel: (season.rows.find((r) => r.key === forShare.key) || {}).label || "Normal",
+    stages: forShare ? forShare.dated : null,
+    scenarioLabel: forShare ? (season.rows.find((r) => r.key === forShare.key) || {}).label || "Normal" : null,
   };
 
   const cards = [];
   const status = statusCard(season, state, res);
   if (status) cards.push(status);
   cards.push(chartCard(season, hybrid));
-  cards.push(tableCard(season, hybrid));
-  cards.push(stageSection(season, hybrid));
+  // Everything below needs a hybrid's two GDU ratings to mean anything.
+  if (hybrid) {
+    cards.push(tableCard(season, hybrid));
+    cards.push(stageSection(season, hybrid));
+  }
   cards.push(frostCard(season, hybrid));
   cards.push(methodCard(season, res, state, hybrid));
 
@@ -350,6 +376,9 @@ function stageCell(iso, offset, isProjected, season, hybrid) {
 // ---------------------------------------------------------------
 // Frost
 // ---------------------------------------------------------------
+
+const FROST_ACCURACY_NOTE =
+  "Read these as the LATE end of the range. Checked against real thermometer records near Missouri Valley, Iowa for 1996–2025, this gridded dataset put the median first 32 °F at Oct 26 where nearby stations measured Oct 19 (Council Bluffs, Omaha) and Oct 7 (Atlantic, Sioux City) — a 9-25 km grid cell averages away the radiative cooling that makes a low spot frost first. GDU accumulation itself checked out to within about 1% of the nearest station; it's the frost dates specifically that run late, because they hinge on one night's minimum rather than a season of averages.";
 function frostCard(season, hybrid) {
   const kf = season.killingFreeze;
   const lf = season.lightFrost;
@@ -366,6 +395,21 @@ function frostCard(season, hybrid) {
   // the median. A hybrid that black-layers exactly on the median freeze
   // date gets caught one year in two, which is not a pass.
   const killEarlyIso = `${year}-${kf.p10MonthDay}`;
+
+  // Without a hybrid there is nothing to score the freeze against, so
+  // the dates stand on their own — which is still useful: "when does
+  // this ZIP usually freeze" is a real question.
+  if (!hybrid) {
+    return h("section", { className: "card" }, [
+      h("h3", { className: "section-header" }, "Frost Risk"),
+      h("div", { className: "summary-stats" }, [
+        stat(formatShort(killEarlyIso), "28 °F by this date 1 yr in 10"),
+        stat(formatShort(killMedianIso), "median 28 °F freeze"),
+        lf.medianMonthDay ? stat(formatShort(`${year}-${lf.medianMonthDay}`), "median 32 °F frost") : stat("—", "median 32 °F frost"),
+      ]),
+      h("p", { className: "field-note" }, FROST_ACCURACY_NOTE),
+    ]);
+  }
 
   // Compare against the LATEST black-layer date among the this-season
   // rows (the cool finish) — the risk question is "could this fail",
@@ -420,11 +464,7 @@ function frostCard(season, hybrid) {
       lf.medianMonthDay ? stat(formatShort(`${year}-${lf.medianMonthDay}`), "median 32 °F frost") : stat("—", "median 32 °F frost"),
     ]),
     verdict,
-    h(
-      "p",
-      { className: "field-note" },
-      "Read these as the LATE end of the range. Checked against real thermometer records near Missouri Valley, Iowa for 1996–2025, this gridded dataset put the median first 32 °F at Oct 26 where nearby stations measured Oct 19 (Council Bluffs, Omaha) and Oct 7 (Atlantic, Sioux City) — a 9-25 km grid cell averages away the radiative cooling that makes a low spot frost first. GDU accumulation itself checked out to within about 1% of the nearest station; it's the frost dates specifically that run late, because they hinge on one night's minimum rather than a season of averages."
-    ),
+    h("p", { className: "field-note" }, FROST_ACCURACY_NOTE),
   ]);
 }
 
@@ -614,7 +654,8 @@ function methodCard(season, res, state, hybrid) {
       h("li", {}, "The three “this season” rows share identical observed and forecast data and differ only in how the remaining days are assumed to go."),
       h("li", {}, `Temperatures: ERA5 reanalysis via Open-Meteo for history and the current season through ${formatShort(season.lastObservedIso, { withYear: true })}, plus Open-Meteo's 16-day forecast through ${formatShort(season.lastKnownIso)}.`),
       h("li", {}, `Grid point: ${state.location.lat.toFixed(4)}, ${state.location.lon.toFixed(4)}.`),
-      hybrid.anyEstimated
+      hybrid ? null : h("li", {}, "No hybrid was entered, so no stage dates are shown — the curves are the heat itself. Add a hybrid on the input screen for silk and black layer predictions."),
+      hybrid && hybrid.anyEstimated
         ? h("li", { className: "gdu-method-estimate" }, [
             h("strong", {}, "This hybrid's ratings are partly estimated. "),
             [hybrid.silk, hybrid.blackLayer]
@@ -624,7 +665,7 @@ function methodCard(season, res, state, hybrid) {
               })
               .filter(Boolean)
               .join(" ") +
-              " Those figures come from an ordinary least-squares fit on all 72 hybrids in the built-in list, with error measured by leaving each hybrid out of the fit and predicting it — so it's out-of-sample error, not the fit describing itself. RM is the weakest basis: it explains 83% of the variation in black layer, and the worst hybrid in the list sits 472 GDU off its maturity's trend, which is about three weeks of grain fill. Use the real ratings when you can get them.",
+              " Those figures come from an ordinary least-squares fit on all 134 hybrids in the built-in list, with error measured by leaving each hybrid out of the fit and predicting it — so it's out-of-sample error, not the fit describing itself. RM is the weakest basis: it explains 87% of the variation in black layer, and the worst hybrid in the list sits 389 GDU off its maturity's trend, which is about two and a half weeks of grain fill. Use the real ratings when you can get them.",
           ])
         : null,
       res.forecastError ? h("li", { className: "gdu-method-warn" }, `The 16-day forecast failed to load (${res.forecastError}), so the projection starts from the last observed day instead.`) : null,

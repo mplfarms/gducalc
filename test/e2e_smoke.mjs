@@ -221,7 +221,7 @@ async function main() {
   // ---- built-in hybrid list ------------------------------------------
   await page.waitForSelector(".gdu-pick-hybrid-btn:not([disabled])", { timeout: 10000 });
   const pickLabel = await page.locator(".gdu-pick-hybrid-btn").textContent();
-  check("the hybrid list loads and reports its size", () => assert.match(pickLabel, /Choose from Hybrid List \(72\)/));
+  check("the hybrid list loads and reports its size", () => assert.match(pickLabel, /Choose from Hybrid List \(134\)/));
 
   await page.locator(".gdu-pick-hybrid-btn").click();
   await page.waitForSelector(".hybrid-picker-option");
@@ -232,7 +232,7 @@ async function main() {
     // Row meta reads "<rm> day · ...", so the RM sequence is readable
     // straight off the rendered list.
     const rms = pickerRows.map((t) => Number((t.match(/(\d+) day/) || [])[1])).filter(Number.isFinite);
-    assert.equal(rms.length, 72);
+    assert.equal(rms.length, 134);
     for (let i = 1; i < rms.length; i++) assert.ok(rms[i] >= rms[i - 1], `RM out of order at row ${i}: ${rms[i - 1]} then ${rms[i]}`);
   });
   if (SHOTS) await page.screenshot({ path: path.join(SHOT_DIR, "06-hybrid-picker.png") });
@@ -328,7 +328,7 @@ async function main() {
   let resolvedText = await page.locator(".gdu-resolved-note").textContent();
   check("black layer is estimated from an entered silk rating", () => {
     assert.match(resolvedText, /estimated from GDUs to silk/);
-    assert.match(resolvedText, /2,572 GDU/); // 2.3868*1290 - 507.45 = 2572
+    assert.match(resolvedText, /2,579 GDU/); // 2.3396*1290 - 438.76 = 2578.3
   });
 
   await page.fill('input[aria-label="GDUs to silk"]', "");
@@ -337,7 +337,7 @@ async function main() {
   resolvedText = await page.locator(".gdu-resolved-note").textContent();
   check("silk is estimated from an entered black layer rating", () => {
     assert.match(resolvedText, /estimated from GDUs to black layer/);
-    assert.match(resolvedText, /1,305 GDU/); // 0.3769*2620 + 317.65 = 1305.13 -> 1305
+    assert.match(resolvedText, /1,299 GDU/); // 0.364*2620 + 345.32 = 1299.0
   });
 
   await page.fill('input[aria-label="GDUs to black layer"]', "");
@@ -346,8 +346,8 @@ async function main() {
   resolvedText = await page.locator(".gdu-resolved-note").textContent();
   check("both are estimated from RM alone", () => {
     assert.match(resolvedText, /estimated from 105 day RM/);
-    assert.match(resolvedText, /1,285 GDU/); // 7.5526*105 + 492.2  = 1285.2
-    assert.match(resolvedText, /2,568 GDU/); // 20.2059*105 + 445.9 = 2567.5
+    assert.match(resolvedText, /1,276 GDU/); // 8.1771*105 + 417.48 = 1276.1
+    assert.match(resolvedText, /2,554 GDU/); // 21.4643*105 + 300.28 = 2554.0
   });
   const estTags = await page.locator(".gdu-tag-estimated").count();
   check("both estimated values carry an est. tag", () => assert.equal(estTags, 2));
@@ -515,6 +515,12 @@ async function main() {
   const accumStillThere = await page.locator(".gdu-chart-svg path.gdu-line").count();
   check("the accumulation chart survives a scenario change below it", () => assert.ok(accumStillThere >= 5));
 
+  // Sanity anchor for the no-hybrid test far below: with a hybrid loaded
+  // there ARE silk/black-layer threshold lines, so asserting zero of them
+  // later is a real assertion and not a dead selector.
+  const withHybridThresholds = await page.locator(".gdu-chart-svg .gdu-stage-line").count();
+  check("the accumulation chart draws a line at silk and at black layer", () => assert.equal(withHybridThresholds, 2));
+
   // ---- brand watermark ----------------------------------------------
   const wmCount = await page.locator("image.gdu-watermark").count();
   check("exactly one watermark, on the accumulation chart only", () => assert.equal(wmCount, 1));
@@ -668,6 +674,69 @@ async function main() {
   });
   check("the watermark follows the Brand View too", () => assert.equal(midwestWatermark, "/logos/midwest.png"));
   if (SHOTS) await page.screenshot({ path: path.join(SHOT_DIR, "13-midwest-dark.png"), fullPage: true });
+
+  // ---- no hybrid at all: ZIP + planting date only ---------------------
+  // The whole point is that a grower with no tech sheet in hand can still
+  // see the heat curve. Nothing that needs a silk or black layer rating
+  // may render, and the PDF must still build.
+  await page.evaluate(() => localStorage.setItem("gdu.themeMode", JSON.stringify("light")));
+  await page.reload({ waitUntil: "networkidle" });
+  await page.evaluate(() => { window.location.hash = "#/calculator"; });
+  await page.waitForSelector('input[aria-label="GDUs to silk"]');
+  await page.fill('input[placeholder="e.g. 09-90 PCE"]', "");
+  await page.fill('input[aria-label="GDUs to silk"]', "");
+  await page.fill('input[aria-label="GDUs to black layer"]', "");
+  await page.fill('input[aria-label="Relative maturity"]', "");
+  await page.waitForTimeout(150);
+
+  const calcEnabled = await page.getByRole("button", { name: "Calculate GDUs" }).isEnabled();
+  check("Calculate is available with no hybrid entered", () => assert.equal(calcEnabled, true));
+
+  await page.getByRole("button", { name: "Calculate GDUs" }).click();
+  await page.waitForSelector(".gdu-chart-svg", { timeout: 20000 });
+
+  const noHybridShape = await page.evaluate(() => ({
+    accumulationCharts: document.querySelectorAll(".gdu-chart-svg").length,
+    stageCharts: document.querySelectorAll(".gdu-stage-chart-svg").length,
+    tables: document.querySelectorAll(".gdu-table").length,
+    thresholdLines: document.querySelectorAll(".gdu-chart-svg .gdu-stage-line").length,
+    watermarks: document.querySelectorAll("image.gdu-watermark").length,
+    body: document.querySelector(".screen-body").textContent,
+  }));
+  check("the accumulation chart still draws from ZIP and planting date alone", () => {
+    assert.equal(noHybridShape.accumulationCharts, 1);
+    assert.equal(noHybridShape.watermarks, 1);
+  });
+  check("nothing that needs a hybrid rating is rendered", () => {
+    assert.equal(noHybridShape.stageCharts, 0, "stage chart should be absent");
+    assert.equal(noHybridShape.tables, 0, "scenario/data tables should be absent");
+    assert.equal(noHybridShape.thresholdLines, 0, "silk/black layer lines should be absent");
+  });
+  check("the results screen says why there are no stage dates", () => {
+    assert.match(noHybridShape.body, /No hybrid entered/i);
+    assert.match(noHybridShape.body, /Add a Hybrid for Stage Dates/i);
+  });
+  if (SHOTS) await page.screenshot({ path: path.join(SHOT_DIR, "14-no-hybrid.png"), fullPage: true });
+
+  const noHybridDownload = page.waitForEvent("download", { timeout: 30000 });
+  await page.locator(".top-bar-btn-share").click();
+  let noHybridPdf;
+  try {
+    noHybridPdf = await noHybridDownload;
+  } catch (e) {
+    const toastNow = await page.locator(".toast-message").allTextContents();
+    throw new Error(`no-hybrid PDF never downloaded; toasts: ${JSON.stringify(toastNow)}; console: ${JSON.stringify(consoleErrors.slice(-3))}`);
+  }
+  const noHybridPath = path.join(SHOT_DIR, "gdu-outlook-no-hybrid.pdf");
+  fs.mkdirSync(SHOT_DIR, { recursive: true });
+  await noHybridPdf.saveAs(noHybridPath);
+  const noHybridBuf = fs.readFileSync(noHybridPath);
+  check("the PDF still builds with no hybrid", () => {
+    assert.equal(noHybridBuf.subarray(0, 5).toString(), "%PDF-");
+    assert.ok(noHybridBuf.length > 15000, `only ${noHybridBuf.length} bytes`);
+    // No stage table or stage chart to carry, so it collapses to one sheet.
+    assert.ok(countPdfPages(noHybridBuf) <= 2, "must not spill past two sheets");
+  });
 
   // ---- help --------------------------------------------------------
   await page.evaluate(() => {

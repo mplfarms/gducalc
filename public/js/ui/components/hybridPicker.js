@@ -17,8 +17,9 @@
 // maturity (09-90 is a 109 day, 77-70 a 77 day), so a heading above each
 // group mostly repeated what the row underneath already said. RM moved
 // onto the row's own meta line instead, which keeps it available for the
-// seven varieties whose names DON'T encode it (10T84, 42W96, 42U97,
-// 5110, 77P13, 77A14, 77C14) without a band of repeated headings.
+// varieties whose names don't encode it — every entry in the current
+// list happens to, but the list gets refreshed and the next one may not.
+// without a band of repeated headings.
 
 import { h, clear, debounceGuard } from "../dom.js";
 import { showCustomModal } from "./modal.js";

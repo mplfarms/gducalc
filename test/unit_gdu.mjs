@@ -447,9 +447,9 @@ console.log("\nhybrid catalog data");
 
 const catalogDoc = JSON.parse(fs.readFileSync(new URL("../public/data/hybrids.json", import.meta.url), "utf8"));
 
-test("the shipped catalog parses and is non-empty", () => {
+test("the shipped catalog parses and has the expected row count", () => {
   assert.ok(Array.isArray(catalogDoc.hybrids));
-  assert.equal(catalogDoc.hybrids.length, 72);
+  assert.equal(catalogDoc.hybrids.length, 134);
 });
 
 test("every catalog row is well formed", () => {
@@ -725,6 +725,18 @@ test("the shipped models reproduce the quoted accuracy on the real catalog", () 
     // if it does, either the coefficients or the quoted figure is wrong.
     assert.ok(med <= MODELS[key].medianErr, `${key}: in-sample median ${med} > quoted ${MODELS[key].medianErr}`);
   }
+});
+
+test("the RM outlier the app flags is still the only one in the list", () => {
+  // 89-58 SSPRORIB survived the 72 -> 134 refresh. If a data refresh ever
+  // introduces another, this fails and someone looks at it rather than
+  // the app quietly flagging two hybrids nobody reviewed.
+  const median = (a) => { const x = [...a].sort((p, q) => p - q); const m = Math.floor(x.length / 2); return x.length % 2 ? x[m] : (x[m - 1] + x[m]) / 2; };
+  const flagged = catalogDoc.hybrids.filter((hy) => {
+    const nb = catalogDoc.hybrids.filter((o) => o.v !== hy.v && Math.abs(o.rm - hy.rm) <= 2).map((o) => o.b);
+    return nb.length >= 3 && Math.abs(hy.b - median(nb)) > 250;
+  });
+  assert.deepEqual(flagged.map((x) => x.v), ["89-58 SSPRORIB"]);
 });
 
 test("every catalog hybrid can be recovered from its RM alone within a sane bound", () => {

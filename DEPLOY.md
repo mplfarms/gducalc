@@ -85,7 +85,7 @@ On a phone, at `https://gducalc.mplfarms.com`:
 
 - [ ] Brand View picker appears on first load; picking one themes the app
 - [ ] A ZIP lookup returns the right town
-- [ ] **Choose from Hybrid List** shows all 72 hybrids
+- [ ] **Choose from Hybrid List** shows all 134 hybrids
 - [ ] Calculate returns a chart within a few seconds
 - [ ] The share button produces a PDF
 - [ ] Add to Home Screen installs it with its own icon, and it opens offline far

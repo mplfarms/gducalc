@@ -125,10 +125,20 @@ export function loadSavedHybrid(id) {
   });
 }
 
+/** True when no hybrid information has been entered at all. */
+export function hasNoHybridInput() {
+  const h = state.hybrid || {};
+  const empty = (v) => v === null || v === undefined || v === "";
+  return empty(h.gduToSilk) && empty(h.gduToBlackLayer) && empty(h.rm);
+}
+
 /**
  * Resolves the current hybrid into the pair of GDU numbers to calculate
  * with, filling in whichever is missing from the other or from RM (see
- * core/hybridEstimate.js). Any one of the three inputs is enough.
+ * core/hybridEstimate.js). Any one of the three inputs is enough — and
+ * NONE is also fine: a hybrid is optional, and with no ratings at all
+ * this returns `{ok: true, value: null}` so the caller can run a plain
+ * location-and-date accumulation with no stage predictions.
  *
  * The returned value carries provenance for both numbers, so the input
  * card, the results header and the method card can all label an
@@ -139,6 +149,7 @@ export function loadSavedHybrid(id) {
  */
 export function validatedHybrid() {
   const h = state.hybrid || {};
+  if (hasNoHybridInput()) return { ok: true, value: null };
   const resolved = resolveHybridInputs({ gduToSilk: h.gduToSilk, gduToBlackLayer: h.gduToBlackLayer, rm: h.rm });
   if (!resolved.ok) return resolved;
 

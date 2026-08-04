@@ -205,7 +205,17 @@ export function render(container) {
     const r = resolveHybridInputs({ gduToSilk: hy.gduToSilk, gduToBlackLayer: hy.gduToBlackLayer, rm: hy.rm });
 
     if (!r.ok) {
-      resolvedNote.appendChild(h("p", { className: "gdu-resolved-empty" }, r.error));
+      // With nothing entered at all this is not an error — it's the
+      // ZIP-and-date-only path, which is a supported way to use the app.
+      resolvedNote.appendChild(
+        h(
+          "p",
+          { className: "gdu-resolved-empty" },
+          inputStore.hasNoHybridInput()
+            ? "No hybrid yet — Calculate will still chart GDU accumulation for this location and planting date. Add any one of the three above to get silk and black layer dates."
+            : r.error
+        )
+      );
       return;
     }
 
@@ -401,7 +411,7 @@ export function render(container) {
   paintResolved();
 
   const hybridCard = h("section", { className: "card" }, [
-    h("h3", { className: "section-header" }, "Hybrid"),
+    h("h3", { className: "section-header" }, "Hybrid (optional)"),
     pickBtn,
     h("div", { className: "gdu-or-divider" }, "or enter it yourself"),
     h("div", { className: "field" }, [h("label", { className: "field-label" }, "Brand"), brandSelectEl]),
@@ -409,7 +419,7 @@ export function render(container) {
     h("div", { className: "field" }, [
       h("label", { className: "field-label" }, "Relative Maturity (days)"),
       rmInput.input,
-      h("p", { className: "field-note" }, "Enough on its own — with RM and no GDU numbers, both get estimated from the 72 hybrids in the built-in list."),
+      h("p", { className: "field-note" }, "Enough on its own — with RM and no GDU numbers, both get estimated from the 134 hybrids in the built-in list."),
     ]),
     h("div", { className: "gdu-two-col" }, [
       h("div", { className: "field" }, [h("label", { className: "field-label" }, "GDUs to Silk"), silkInput.input]),
@@ -461,6 +471,10 @@ export function render(container) {
           showToast("Pick a planting date.", { type: "error" });
           return;
         }
+        // A hybrid is optional. With none, the results screen shows the
+        // accumulation curves for the location alone; with a bad partial
+        // entry (a typo, a reversed pair) it still refuses, because that
+        // is a mistake rather than a choice.
         const hybrid = inputStore.validatedHybrid();
         if (!hybrid.ok) {
           showToast(hybrid.error, { type: "error" });

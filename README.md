@@ -1,10 +1,16 @@
-# GDU Calculator v1.9 (Beta)
+# GDU Calculator v2.0 (Beta)
 
 A hybrid GDU calculator for corn: set a field location, a planting date, and a
-hybrid (72 built in, or type your own numbers — any one of GDUs to silk, GDUs to
+hybrid (134 built in, or type your own numbers — any one of GDUs to silk, GDUs to
 black layer, or a relative maturity is enough), and get predicted stage dates for
 this season plus last year, a normal year, an abnormally hot year, and an
 abnormally cool year — with a frost-risk check on the end.
+
+**The hybrid is optional.** A ZIP code and a planting date alone produce the
+accumulation chart, the percentile band and the frost dates — the heat itself,
+with no stage predictions attached. Sections that need a silk or black-layer
+rating (Predicted Stage Dates, Growth Stages, Data) are omitted rather than
+filled with guesses, and the PDF collapses to match.
 
 The results screen is one scrollable report — nothing behind a tab, so a single
 screenshot carries the whole answer:
@@ -104,10 +110,10 @@ npm test                  # unit + end-to-end
 npm run shots             # e2e plus screenshots into test/shots/
 ```
 
-* `test/unit_gdu.mjs` — 62 checks on the GDU math, the shipped hybrid catalog, the
+* `test/unit_gdu.mjs` — 63 checks on the GDU math, the shipped hybrid catalog, the
   stage ladder and the rating estimator, all hand-worked from the formulas rather
   than snapshotted from a previous run.
-* `test/e2e_smoke.mjs` — 68 checks driving the real UI in headless Chromium with
+* `test/e2e_smoke.mjs` — 74 checks driving the real UI in headless Chromium with
   every weather/geocode call intercepted and served deterministic synthetic data.
 
 ## How it works
@@ -149,26 +155,33 @@ the median freeze date gets caught one year in two, which is not a pass.
 
 ## The hybrid list
 
-72 hybrids ship in `public/data/hybrids.json`, built from the grower-supplied
-sheet and **reproduced exactly as supplied**. Nothing derives, smooths or
-sanity-corrects a GDU rating from relative maturity.
+134 hybrids ship in `public/data/hybrids.json`, built from the grower-supplied
+GDU worksheet (`data-src-gdu-worksheet.xlsx`, also flattened to
+`data-src-hybrids.csv`) and **reproduced exactly as supplied**. Nothing derives,
+smooths or sanity-corrects a GDU rating from relative maturity.
+
+This list replaced an earlier 72-hybrid one wholesale — no merge, no leftovers.
+**The estimator was refit at the same time**, because it is fitted *on* this data:
+silk-from-RM's slope moved from 7.55 to 8.18, which is about 26 GDU at the long
+end of the range. Shipping the old coefficients against the new list would have
+been quietly wrong.
 
 The picker searches by variety or maturity and is sorted shortest maturity
 first, with RM on each row's meta line rather than in section headings — most
 variety numbers already encode maturity (09-90 is a 109 day), so headings mostly
-repeated the row beneath them. Keeping RM on the row still covers the seven
-varieties whose names don't encode it (10T84, 42W96, 42U97, 5110, 77P13, 77A14,
-77C14). Picking a hybrid
+repeated the row beneath them. RM stays on the row anyway, since the list gets
+refreshed and a future one may carry names that don't encode it. Picking a hybrid
 fills both GDU boxes and tags them "From hybrid list"; editing either value
 re-tags them "Edited", shows what the list said, and offers a one-tap reset — an
 edited number never keeps wearing the list's authority.
 
-One rating in the sheet is unusual for its maturity: **89-58 SSPRORIB** (RM 89)
-is rated 1,329 silk / 2,592 black layer, roughly 350 GDU above its RM neighbours
-and in line with a 103–105 day hybrid. Per explicit instruction it is loaded
-as-is; the app flags it on selection so whoever picks it looks twice. The check
-is generic (`rmOutlierNote` in `core/hybridCatalog.js`) and fires for anything
-more than 250 GDU off the median of hybrids within ±2 RM days.
+One rating is still unusual for its maturity, and it survived the refresh:
+**89-58 SSPRORIB** (RM 89) is rated 1,329 silk / 2,592 black layer, 352 GDU above
+the median of its RM neighbours and in line with a 103–105 day hybrid. Per
+explicit instruction it is loaded as-is; the app flags it on selection so whoever
+picks it looks twice. The check is generic (`rmOutlierNote` in
+`core/hybridCatalog.js`) and fires for anything more than 250 GDU off the median
+of hybrids within ±2 RM days — re-run against the new list, it is the only hit.
 
 Variety names display verbatim, with no Brand View prefix applied.
 
@@ -220,35 +233,40 @@ the alert; the number just has to be legible.
 
 Any **one** of GDUs to silk, GDUs to black layer, or relative maturity is enough
 to calculate. Whatever is missing is filled in by ordinary least squares fitted on
-all 72 hybrids in the built-in list, exactly as supplied — nothing trimmed to
+all 134 hybrids in the built-in list, exactly as supplied — nothing trimmed to
 flatter the fit, 89-58 included.
 
 Errors below are **leave-one-out**: each hybrid was predicted by a model fitted on
-the other 71 and never on itself. In-sample error reads about 10% lower and would
+the other 133 and never on itself. In-sample error reads about 10% lower and would
 be measuring the fit's memory rather than its accuracy.
 
 | Estimate | median err | p90 | worst |
 |---|---|---|---|
-| silk from black layer | 19 GDU | 53 | 102 |
-| black layer from silk | 40 GDU | 140 | 276 |
-| silk from RM | 24 GDU | 67 | 248 |
-| black layer from RM | 45 GDU | 150 | 472 |
+| silk from black layer | 25 GDU | 58 | 115 |
+| black layer from silk | 44 GDU | 171 | 267 |
+| silk from RM | 29 GDU | 58 | 187 |
+| black layer from RM | 45 GDU | 146 | 389 |
 
-**A real GDU number always outranks RM as the basis**, and the table is why: a
-paired GDU rating is specific to that hybrid, while RM only locates it in a
-maturity band holding a 200-plus GDU spread. So a missing black layer is derived
-from a known silk before the app will fall back to maturity. `resolve()` in
-`core/hybridEstimate.js` enforces the precedence and a unit test pins it.
+**A real GDU number is preferred over RM**, though the 134-hybrid refit narrowed
+the case for it and that's worth saying plainly. Silk from a known black layer
+(25 GDU) still clearly beats silk from RM (29). For black layer the two are now
+effectively tied — 44 from a known silk against 45 from RM — where on the old
+list silk was the clear winner. The preference stands on the grounds that a
+paired GDU rating is specific to *that* hybrid while RM only locates it in a
+maturity band holding a 200-plus GDU spread, not on a meaningful accuracy gap.
+`resolve()` in `core/hybridEstimate.js` enforces the precedence and a unit test
+pins it.
 
-**RM is the weakest input.** R² is 0.83 for black layer and the worst hybrid in
-the list — 42W96 TRERIB, rated 2,849 where the RM-96 trend says 2,378 — is 471 GDU
-off, roughly three weeks of grain fill. It's a reasonable default when the tech
-sheet isn't at hand; it is not a substitute for it.
+**RM is the weakest input.** R² is 0.87 for black layer and the worst hybrid in
+the list — 89-58 SSPRORIB, rated 2,592 where the RM-89 trend says 2,203 — is 389
+GDU off, roughly two and a half weeks of grain fill. It's a reasonable default
+when the tech sheet isn't at hand; it is not a substitute for it.
 
-A quadratic in RM was tested and rejected: it moved black-layer RMSE from 88.4 to
-87.7 GDU, which is noise, and it bends badly outside the fitted range. The fit
-covers RM 77–118 (the list's own span); outside that the app still calculates but
-says on screen that it is extrapolating.
+A quadratic in RM was tested and rejected on the original list: it moved
+black-layer RMSE from 88.4 to 87.7 GDU, which is noise, and it bends badly
+outside the fitted range. The fit covers RM 77–118 (the list's own span, unchanged
+by the refresh); outside that the app still calculates but says on screen that it
+is extrapolating.
 
 Estimated values are **never written into the input boxes** — a guess sitting in a
 field looks identical to something read off a tech sheet, and that difference is

@@ -55,16 +55,18 @@ const SHARE_ICON_SVG = `
  */
 export function buildSummary({ season, hybrid, location, rows }) {
   const lines = [];
-  lines.push(`GDU outlook — ${hybrid.label}`);
+  lines.push(hybrid ? `GDU outlook — ${hybrid.label}` : "GDU accumulation");
   lines.push(`${location.label} · planted ${formatShort(season.plantingIso, { withYear: true })}`);
 
-  const est = [];
-  if (hybrid.silk && hybrid.silk.source !== "entered") est.push("silk");
-  if (hybrid.blackLayer && hybrid.blackLayer.source !== "entered") est.push("black layer");
-  lines.push(
-    `Rated ${hybrid.gduToSilk.toLocaleString()} GDU to silk, ${hybrid.gduToBlackLayer.toLocaleString()} to black layer` +
-      (est.length ? ` (${est.join(" and ")} estimated, not from a tech sheet)` : "")
-  );
+  if (hybrid) {
+    const est = [];
+    if (hybrid.silk && hybrid.silk.source !== "entered") est.push("silk");
+    if (hybrid.blackLayer && hybrid.blackLayer.source !== "entered") est.push("black layer");
+    lines.push(
+      `Rated ${hybrid.gduToSilk.toLocaleString()} GDU to silk, ${hybrid.gduToBlackLayer.toLocaleString()} to black layer` +
+        (est.length ? ` (${est.join(" and ")} estimated, not from a tech sheet)` : "")
+    );
+  }
 
   if (season.gduToDate !== null && season.gduToDate !== undefined) {
     const vs = season.gduVsNormal;
@@ -74,8 +76,8 @@ export function buildSummary({ season, hybrid, location, rows }) {
     );
   }
 
-  lines.push("\nPredicted dates:");
-  for (const row of rows) {
+  if (rows && rows.length) lines.push("\nPredicted dates:");
+  for (const row of rows || []) {
     const silk = row.silkIso ? formatShort(row.silkIso, { withYear: true }) : "not reached";
     const bl = row.blackLayerIso ? formatShort(row.blackLayerIso, { withYear: true }) : "not reached";
     lines.push(`  ${row.label}: silk ${silk}, black layer ${bl}`);
@@ -138,7 +140,7 @@ export async function shareReport(ctx) {
     const blob = buildPdf({ jsPDF, ...ctx, logoDataUrl, generatedOn, appVersion: APP_VERSION });
     busy.dismiss();
     await shareOrDownload(blob, pdfFilename({ hybrid: ctx.hybrid, location: ctx.location, generatedOn }), "application/pdf", {
-      title: `GDU outlook — ${ctx.hybrid.label}`,
+      title: ctx.hybrid ? `GDU outlook — ${ctx.hybrid.label}` : `GDU accumulation — ${ctx.location.label}`,
       text: buildSummary(ctx),
     });
   } catch (e) {
