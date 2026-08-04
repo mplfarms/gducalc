@@ -1,4 +1,4 @@
-# GDU Calculator v1.5 (Beta)
+# GDU Calculator v1.7 (Beta)
 
 A hybrid GDU calculator for corn: set a field location, a planting date, and a
 hybrid (72 built in, or type your own numbers — any one of GDUs to silk, GDUs to
@@ -19,12 +19,35 @@ screenshot carries the whole answer:
 6. **Frost Risk** — early/median freeze dates and a verdict
 7. **How these numbers were made** — method and provenance
 
-A share button sits left of the Settings gear on the results screen. **Print /
-Save as PDF** is the one that produces a real artifact — the print stylesheet
-forces light tokens (a dark-mode print is a black page), drops every control that
-can't be tapped on paper, and keeps cards and charts off page breaks. **Share…**
-uses `navigator.share` where it exists and is hidden where it doesn't, rather than
-shown-and-broken; **Copy summary** covers everything else.
+A share button sits left of the Settings gear on the results screen, offering
+**Share PDF**, **Print** and **Copy summary**.
+
+**Share PDF** builds a three-page branded report (`core/pdfBuilder.js`) and hands
+it to the OS share sheet as a file where that exists, falling back to a download.
+Both charts are drawn as **vector**, not screenshotted. The shortcut — serialise
+the on-screen SVG and rasterise it — was rejected twice over: the SVGs take every
+color from CSS custom properties and the watermark from an external `<image href>`,
+so a serialised copy renders unstyled and logo-less unless you walk the tree
+inlining computed styles anyway; and a raster chart doesn't survive being printed.
+
+Layout matches Corn Plot Harvest's PDF — US Letter at 612×792 pt, 36 pt margin,
+Helvetica — with section headers in white on a filled brand-accent bar, the same
+treatment as the app's own cards.
+
+Two things worth knowing if you edit it:
+
+* **jsPDF is loaded on demand**, not on page load — a 356 KB library has no
+  business being fetched by someone checking a silk date in a pickup. The pinned
+  CDN URL is the single cross-origin exception in `sw.js`'s otherwise
+  network-only rule, so the second export works with no signal.
+* **jsPDF's Helvetica is WinAnsi-encoded** and characters outside that set print
+  as something else without erroring. U+2212 MINUS came out as a double quote, so
+  "−203 GDU" read as `"203 GDU`. `pdfSafe()` maps the handful of offenders to
+  ASCII, and `doc.text` is wrapped once so no call site can miss it.
+
+**Print** stays as a secondary; the print stylesheet forces light tokens (a
+dark-mode print is a black page), drops every control, and keeps cards off page
+breaks.
 
 The shared text deliberately carries **no link to the specific result**. Inputs
 live in the device's own local storage, so a URL would open the recipient's app
@@ -74,7 +97,7 @@ npm run shots             # e2e plus screenshots into test/shots/
 * `test/unit_gdu.mjs` — 62 checks on the GDU math, the shipped hybrid catalog, the
   stage ladder and the rating estimator, all hand-worked from the formulas rather
   than snapshotted from a previous run.
-* `test/e2e_smoke.mjs` — 55 checks driving the real UI in headless Chromium with
+* `test/e2e_smoke.mjs` — 64 checks driving the real UI in headless Chromium with
   every weather/geocode call intercepted and served deterministic synthetic data.
 
 ## How it works
@@ -138,6 +161,40 @@ is generic (`rmOutlierNote` in `core/hybridCatalog.js`) and fires for anything
 more than 250 GDU off the median of hybrids within ±2 RM days.
 
 Variety names display verbatim, with no Brand View prefix applied.
+
+## The stage ramp's color
+
+The Growth Stages bands are a **sequential** ramp — one hue stepped light to dark
+by season progress, not a categorical palette. Fifteen hues would imply fifteen
+unrelated categories.
+
+The hue is per Brand View: **green for Midwest**, whose own identity is green, and
+**harvest gold for NC+ and Crow's**, where green reads as a third unrelated brand
+color. Two measured decisions sit behind that:
+
+**Light mode uses `#DA9100`, not the brands' own highlight yellows.** A ramp has
+to run light to dark, and a bright yellow has nowhere to go before it hits white.
+Across the same alpha schedule, NC+'s `#FFDC32` spans a relative luminance range
+of 0.13 against green's 0.43 — the progression all but vanishes. `#DA9100` spans
+0.32 and still reads unmistakably as harvest gold, with band-label contrast at
+8.6:1 or better on every step.
+
+**Dark mode needs a warm backdrop, because gold over blue isn't gold.** The ramp
+alpha-composites over whatever is behind it, and a warm hue over NC+'s cool blue
+card desaturates to khaki — measured at 0.24 saturation at the top of the ramp
+versus 0.62 over a warm base, and khaki is exactly what it looked like. A
+`#241f14` backdrop rect sized to the band stack gives the ramp its own base to
+composite against, restoring the hue and lifting worst-case label contrast from
+3.9:1 to 4.6:1. Light mode and Midwest need none of it.
+
+`--gdu-stage-base` names that effective background, and the backdrop, the rules
+between bands and the halos behind labels all read from it. Before it existed the
+dividers stayed card-blue and striped the gold chart with blue lines.
+
+One related fix: the "GDU through <date>" marker label is now ink rather than
+danger-red. Red sits at ~4:1 on white and ~3.4:1 on the dark warm backdrop, under
+the floor for 11px bold in both. The dashed rule it annotates stays red — that's
+the alert; the number just has to be legible.
 
 ## Partial inputs and the rating estimator
 

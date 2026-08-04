@@ -18,10 +18,26 @@
 // hue running light to dark rather than a different hue per stage.
 // Rainbow-ing fifteen stages would imply fifteen unrelated categories.
 //
-// The hue is a fixed green in both light and dark mode, applied at
-// stepped alpha over the card surface so it adapts to whichever brand's
-// background it lands on. Text stays in the theme's own ink token — a
-// label never wears the series color.
+// The hue is set per Brand View in gdu.css: green for Midwest, whose own
+// identity is green, and harvest gold for NC+ and Crow's, whose reds and
+// blues a green ramp sits awkwardly against. Applied as stepped alpha
+// over the card surface rather than as fixed hex steps, so the same ramp
+// works on every card background. Text stays in the theme's own ink
+// token — a label never wears the series color.
+//
+// One structural detail exists purely to make the gold work in dark
+// mode: an opaque backdrop rect sits behind the bands. Alpha-compositing
+// a warm hue over a COOL card cannot produce gold — gold over NC+'s blue
+// desaturates to khaki (measured: 0.24 saturation at the top of the ramp
+// versus 0.62 over a warm base), which is exactly what it looked like.
+// Giving the plot its own dark warm base to composite against restores
+// the hue, and as a side effect lifts the worst band-label contrast from
+// 3.9:1 to 4.6:1. The backdrop is transparent in light mode and for
+// Midwest, where compositing over the card already works.
+//
+// The bands then go in their own <g> above that backdrop; dividers and
+// labels stay outside the group so they are never affected by anything
+// applied to the ramp as a whole.
 
 import { formatShort } from "../core/dates.js";
 
@@ -117,6 +133,17 @@ function build(width, { stages, gduToDate, asOfIso }) {
   // crop is in this stage between these two GDU totals". The final entry
   // (maturity) is the top of the stack, not a band of its own.
   const bandCount = stages.length - 1;
+  // See the header: this is what lets a warm ramp stay warm on a cool
+  // card. Sized to the band stack rather than the whole plot — the plot
+  // has headroom above the top band, and filling that too read as a dark
+  // bar across the top of the chart.
+  const stackTop = y(stages[stages.length - 1].gdu);
+  root.appendChild(
+    svg("rect", { class: "gdu-stage-backdrop", x: margin.left, y: stackTop, width: plotW, height: margin.top + plotH - stackTop })
+  );
+  const bandGroup = svg("g", { class: "gdu-stage-bands" });
+  root.appendChild(bandGroup);
+
   for (let i = 0; i < bandCount; i++) {
     const from = stages[i];
     const to = stages[i + 1];
@@ -124,7 +151,7 @@ function build(width, { stages, gduToDate, asOfIso }) {
     const bottom = y(from.gdu);
     const bandH = bottom - top;
 
-    root.appendChild(
+    bandGroup.appendChild(
       svg("rect", {
         class: "gdu-stage-band",
         x: margin.left,
@@ -137,6 +164,7 @@ function build(width, { stages, gduToDate, asOfIso }) {
     );
     // A 2px surface-colored rule between bands, so adjacent steps of the
     // same ramp stay visually separable without adding a border color.
+    // Outside bandGroup on purpose — see the note in this file's header.
     root.appendChild(svg("line", { class: "gdu-stage-divider", x1: margin.left, x2: margin.left + plotW, y1: top, y2: top }));
 
     if (bandH < 13) continue; // no room for a label; the Data tab has it

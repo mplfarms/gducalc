@@ -95,7 +95,18 @@ async function main() {
   // not match the npm package's expected build number — point at it
   // explicitly instead of letting Playwright try to download one.
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || "/opt/pw-browsers/chromium-1194/chrome-linux/chrome" });
-  const ctx = await browser.newContext({ viewport: { width: 430, height: 932 }, deviceScaleFactor: 2 });
+  const ctx = await browser.newContext({
+    viewport: { width: 430, height: 932 },
+    deviceScaleFactor: 2,
+    // Service workers are blocked here for a concrete reason, not
+    // squeamishness: requests a service worker makes are invisible to
+    // page.route, and sw.js now handles the jsPDF CDN URL itself — so
+    // with the worker running, the route below never fires and the PDF
+    // export fails on a network the sandbox doesn't have. Blocking also
+    // keeps the several page.reload()s in this suite deterministic
+    // instead of racing a cache-first worker.
+    serviceWorkers: "block",
+  });
   const page = await ctx.newPage();
 
   const consoleErrors = [];
@@ -125,6 +136,12 @@ async function main() {
     })
   );
   await page.route("**://api.bigdatacloud.net/**", (route) => route.fulfill({ status: 200, contentType: "application/json", body: "{}" }));
+  // The PDF path loads jsPDF from cdnjs at runtime. Serve the pinned
+  // version from node_modules so the export is exercised for real rather
+  // than stubbed out.
+  await page.route("**://cdnjs.cloudflare.com/**", (route) =>
+    route.fulfill({ status: 200, contentType: "text/javascript", body: fs.readFileSync(path.join(__dirname, "..", "node_modules", "jspdf", "dist", "jspdf.umd.min.js"), "utf8") })
+  );
 
   let checks = 0;
   const check = (name, fn) => {
@@ -417,6 +434,13 @@ async function main() {
   const topLabel = await page.locator(".gdu-stage-top-label").textContent();
   check("maturity is labeled at the top of the stack", () => assert.match(topLabel, /Maturity \(black layer\) \(~ /));
 
+  // The stage ramp hue is per Brand View: green for Midwest (whose own
+  // identity is green), harvest gold for NC+ and Crow's.
+  const bandFill = await page.evaluate(() => getComputedStyle(document.querySelector(".gdu-stage-band")).fill);
+  check("NC+ gets the harvest gold stage ramp, not green", () => assert.equal(bandFill, "rgb(218, 145, 0)"));
+  const backdropLight = await page.evaluate(() => getComputedStyle(document.querySelector(".gdu-stage-backdrop")).fill);
+  check("light mode composites straight onto the white card", () => assert.equal(backdropLight, "rgb(255, 255, 255)"));
+
   const anchoredCount = await page.locator(".gdu-stage-band-label-anchored").count();
   check("grower-anchored stages are visually distinguished", () => assert.ok(anchoredCount >= 2, `only ${anchoredCount} anchored labels`));
 
@@ -485,16 +509,52 @@ async function main() {
   await page.locator(".top-bar-btn-share").click();
   await page.waitForSelector(".share-menu-panel");
   const shareItems = await page.locator(".share-menu-item-label").allTextContents();
-  check("the share menu offers print and copy", () => {
-    assert.ok(shareItems.includes("Print / Save as PDF"), shareItems.join("|"));
-    assert.ok(shareItems.includes("Copy summary"), shareItems.join("|"));
+  check("the share menu leads with the PDF", () => {
+    assert.deepEqual(shareItems, ["Share PDF", "Print", "Copy summary"]);
   });
   if (SHOTS) await page.screenshot({ path: path.join(SHOT_DIR, "11-share-menu.png") });
 
+  // ---- the PDF itself -------------------------------------------------
+  // Headless Chromium has no navigator.share, so shareOrDownload falls
+  // through to a plain download — which is the path to assert on anyway,
+  // since it's what every desktop browser does.
+  const downloadPromise = page.waitForEvent("download", { timeout: 30000 });
+  await page.getByText("Share PDF").click();
+  let download;
+  try {
+    download = await downloadPromise;
+  } catch (e) {
+    const toastNow = await page.locator(".toast-message").allTextContents();
+    throw new Error(`no download; toasts on screen: ${JSON.stringify(toastNow)}; console: ${JSON.stringify(consoleErrors.slice(-3))}`);
+  }
+  const pdfPath = path.join(SHOT_DIR, "gdu-outlook.pdf");
+  fs.mkdirSync(SHOT_DIR, { recursive: true });
+  await download.saveAs(pdfPath);
+
+  const suggested = download.suggestedFilename();
+  check("the PDF filename names the hybrid and the field", () => {
+    assert.match(suggested, /^GDU-Outlook_/);
+    assert.match(suggested, /09-90/);
+    assert.match(suggested, /Missouri-Valley/);
+    assert.match(suggested, /\.pdf$/);
+  });
+
+  const pdfBuf = fs.readFileSync(pdfPath);
+  check("the PDF is a real, non-trivial document", () => {
+    assert.equal(pdfBuf.subarray(0, 5).toString(), "%PDF-");
+    assert.ok(pdfBuf.length > 20000, `only ${pdfBuf.length} bytes`);
+  });
+  const pdfText = pdfBuf.toString("latin1");
+  const pageCount = (pdfText.match(/\/Type\s*\/Page[^s]/g) || []).length;
+  check("the PDF fits three pages", () => assert.equal(pageCount, 3));
+
   // The summary text is what actually gets sent, so assert on its
   // content — reached through the clipboard action, since results.js
-  // keeps the share context private.
+  // keeps the share context private. Choosing an action closes the menu,
+  // so it has to be reopened after the PDF step above.
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.locator(".top-bar-btn-share").click();
+  await page.waitForSelector(".share-menu-panel");
   await page.getByText("Copy summary").click();
   await page.waitForSelector(".toast-success");
   const clip = await page.evaluate(() => navigator.clipboard.readText());
@@ -545,7 +605,40 @@ async function main() {
   await page.waitForSelector(".gdu-chart-svg", { timeout: 20000 });
   const darkTheme = await page.evaluate(() => document.documentElement.dataset.theme);
   check("dark mode applies", () => assert.equal(darkTheme, "dark"));
+
+  const darkRamp = await page.evaluate(() => ({
+    fill: getComputedStyle(document.querySelector(".gdu-stage-band")).fill,
+    backdrop: getComputedStyle(document.querySelector(".gdu-stage-backdrop")).fill,
+  }));
+  check("dark mode gold composites over a warm backdrop, not the blue card", () => {
+    assert.equal(darkRamp.fill, "rgb(232, 180, 81)");
+    // Without this the ramp desaturates to khaki over NC+ blue.
+    assert.equal(darkRamp.backdrop, "rgb(36, 31, 20)");
+  });
+  const dividerStroke = await page.evaluate(() => getComputedStyle(document.querySelector(".gdu-stage-divider")).stroke);
+  check("band dividers follow the backdrop, not the card", () => assert.equal(dividerStroke, "rgb(36, 31, 20)"));
+
+
   if (SHOTS) await page.screenshot({ path: path.join(SHOT_DIR, "04-results-dark.png"), fullPage: true });
+
+  // Midwest must keep green in both modes — the gold is only for the two
+  // brands a green ramp clashes with.
+  await page.evaluate(() => localStorage.setItem("gdu.selectedBrand", JSON.stringify("midwestSeedGenetics")));
+  await page.reload({ waitUntil: "networkidle" });
+  await page.evaluate(() => { window.location.hash = "#/results"; });
+  await page.waitForSelector(".gdu-stage-band", { timeout: 20000 });
+  const midwestFill = await page.evaluate(() => getComputedStyle(document.querySelector(".gdu-stage-band")).fill);
+  const midwestBackdrop = await page.evaluate(() => getComputedStyle(document.querySelector(".gdu-stage-backdrop")).fill);
+  check("Midwest keeps the green ramp on its own card color", () => {
+    assert.equal(midwestFill, "rgb(87, 176, 125)");
+    assert.equal(midwestBackdrop, "rgb(12, 74, 44)"); // Midwest's dark card — no warm base needed
+  });
+  const midwestWatermark = await page.evaluate(() => {
+    const img = document.querySelector("image.gdu-watermark");
+    return img ? img.getAttribute("href") : null;
+  });
+  check("the watermark follows the Brand View too", () => assert.equal(midwestWatermark, "/logos/midwest.png"));
+  if (SHOTS) await page.screenshot({ path: path.join(SHOT_DIR, "13-midwest-dark.png"), fullPage: true });
 
   // ---- help --------------------------------------------------------
   await page.evaluate(() => {

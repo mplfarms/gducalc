@@ -191,7 +191,20 @@ async function loadAndPaint(container, body, state, hybrid) {
     lastObservedIso,
   });
 
-  shareContext = { season, hybrid, location: state.location, rows: season.rows };
+  // Everything the PDF and the text summary need, captured once the
+  // season exists. The stage list and its scenario label come from the
+  // same helper the on-screen stage chart uses, so the PDF can never
+  // disagree with what the user is looking at.
+  const forShare = stagesForView(season, hybrid);
+  shareContext = {
+    season,
+    hybrid,
+    location: state.location,
+    rows: season.rows,
+    brand: getBrand(brandStore.getState().selectedBrand),
+    stages: forShare.dated,
+    scenarioLabel: (season.rows.find((r) => r.key === forShare.key) || {}).label || "Normal",
+  };
 
   const cards = [];
   const status = statusCard(season, state, res);

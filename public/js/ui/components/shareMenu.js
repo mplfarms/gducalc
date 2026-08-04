@@ -7,25 +7,32 @@
 //
 // Three actions, and the split between them is deliberate:
 //
-//   Print / Save as PDF — the one that produces a real artifact. Every
-//     phone and desktop browser's print dialog can save to PDF, which
-//     is what actually gets emailed or texted to a customer. The heavy
-//     lifting is in the @media print block in gdu.css.
+//   Share PDF      — the primary action, and the one that produces a
+//     real artifact. Builds a branded two-page report (core/pdfBuilder.js)
+//     and hands it to the OS share sheet as a file where that exists,
+//     falling back to a plain download. This replaced "open the browser's
+//     print dialog and hope": the print path produced whatever the
+//     browser felt like, with app chrome to strip and page breaks landing
+//     mid-chart, and it looked like a screenshot of an app rather than
+//     something you send a customer.
 //
-//   Share…             — the OS share sheet via navigator.share, on the
-//     devices that have it. Sends a text summary, NOT a link to this
-//     specific result — see the note on buildSummary() below for why.
+//   Print          — kept as a secondary, because the print stylesheet is
+//     already there and someone with a printer in front of them
+//     shouldn't have to go through a file.
 //
-//   Copy summary       — the fallback that works everywhere, including
-//     desktop browsers with no share sheet.
-//
-// Share… is hidden entirely when navigator.share is missing rather than
-// shown-and-broken; Copy summary covers that case.
+//   Copy summary   — plain text, for pasting into a message or an email
+//     body. Works everywhere, including desktop browsers with no share
+//     sheet.
 
 import { h, clear, debounceGuard } from "../dom.js";
 import { showCustomModal } from "./modal.js";
 import { showToast } from "./toast.js";
-import { formatShort } from "../../core/dates.js";
+import { formatShort, todayIso } from "../../core/dates.js";
+import { buildPdf, pdfFilename } from "../../core/pdfBuilder.js";
+import { loadJsPdf } from "../pdfLibLoader.js";
+import { getLogoDataUrl } from "../logoCache.js";
+import { shareOrDownload } from "../fileSave.js";
+import { APP_VERSION } from "../../version.js";
 
 // The classic box-with-up-arrow share glyph, matching Corn Plot
 // Harvest's. stroke="currentColor" so it tracks the top bar's white
@@ -126,8 +133,32 @@ function openShareMenu(ctx) {
   const items = [];
 
   items.push([
-    "Print / Save as PDF",
-    "Opens your browser's print dialog. Choose “Save as PDF” to get a file you can email or text.",
+    "Share PDF",
+    "Builds a branded two-page report and opens your share sheet, or downloads it.",
+    async () => {
+      modal.close();
+      const busy = showToast("Building the PDF…", { duration: 0 });
+      try {
+        const [jsPDF, logoDataUrl] = await Promise.all([
+          loadJsPdf(),
+          // A missing logo costs a watermark, not the report.
+          ctx.brand ? getLogoDataUrl(ctx.brand).catch(() => null) : Promise.resolve(null),
+        ]);
+        const generatedOn = todayIso();
+        const blob = buildPdf({ jsPDF, ...ctx, logoDataUrl, generatedOn, appVersion: APP_VERSION });
+        busy.dismiss();
+        await shareOrDownload(blob, pdfFilename({ hybrid: ctx.hybrid, location: ctx.location, generatedOn }), "application/pdf");
+      } catch (e) {
+        busy.dismiss();
+        console.error("[share] PDF build failed", e);
+        showToast(e && e.message ? e.message : "Couldn't build the PDF.", { type: "error" });
+      }
+    },
+  ]);
+
+  items.push([
+    "Print",
+    "Opens your browser's print dialog for this screen.",
     () => {
       modal.close();
       // The dialog is modal and synchronous in most browsers; letting the
@@ -138,23 +169,6 @@ function openShareMenu(ctx) {
   ]);
 
   const summary = () => buildSummary(ctx);
-
-  if (typeof navigator !== "undefined" && navigator.share) {
-    items.push([
-      "Share…",
-      "Sends the numbers as text through your phone's share sheet.",
-      async () => {
-        modal.close();
-        try {
-          await navigator.share({ title: `GDU outlook — ${ctx.hybrid.label}`, text: summary() });
-        } catch (e) {
-          // AbortError just means the user dismissed the sheet — not a
-          // failure worth a toast.
-          if (e && e.name !== "AbortError") showToast("Couldn't open the share sheet.", { type: "error" });
-        }
-      },
-    ]);
-  }
 
   items.push([
     "Copy summary",

@@ -580,22 +580,40 @@
 
 /* A SEQUENTIAL ramp — one hue, stepped light to dark by season progress
    (alpha is set per band in stageChart.js). Not a categorical palette:
-   the bands encode one ordered quantity, and fifteen different hues
-   would imply fifteen unrelated categories. Alpha over the card surface
-   rather than fixed hex steps is what lets the same ramp sit correctly
-   on Midwest green, NC+ blue and Crow's near-black cards. */
+   the bands encode one ordered quantity, and fifteen different hues would
+   imply fifteen unrelated categories. Alpha over the card surface rather
+   than fixed hex steps is what lets the same ramp sit correctly on
+   Midwest green, NC+ blue and Crow's near-black cards.
+
+   The HUE is per Brand View. Midwest keeps green — its own identity is
+   green and the ramp reads as part of the brand. NC+ (red/blue) and
+   Crow's (red/black) get harvest gold instead, per explicit request:
+   green against those two reads as a third, unrelated brand color.
+
+   Light mode #DA9100 was chosen over the brands' own highlight yellows
+   (#FFDC32, #D9A441) for a measurable reason. A ramp has to run light to
+   dark, and a bright yellow has almost nowhere to go before it hits
+   white: across the same alpha schedule, #FFDC32 spans a relative
+   luminance range of 0.13 versus green's 0.43, so the progression all
+   but disappears. #DA9100 spans 0.32 and still reads unmistakably as
+   harvest gold. Band-label contrast stays at 8.6:1 or better at every
+   step. */
 .gdu-stage-band {
   fill: #2f7d4f;
 }
 
-:root[data-theme="dark"] .gdu-stage-band,
-:root:not([data-theme]) .gdu-stage-band {
-  fill: #2f7d4f;
+:root[data-brand="ncPlus"] .gdu-stage-band,
+:root[data-brand="crows"] .gdu-stage-band {
+  fill: #da9100;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme]) .gdu-stage-band {
     fill: #57b07d;
+  }
+  :root:not([data-theme])[data-brand="ncPlus"] .gdu-stage-band,
+  :root:not([data-theme])[data-brand="crows"] .gdu-stage-band {
+    fill: #e8b451;
   }
 }
 
@@ -603,10 +621,53 @@
   fill: #57b07d;
 }
 
+:root[data-theme="dark"][data-brand="ncPlus"] .gdu-stage-band,
+:root[data-theme="dark"][data-brand="crows"] .gdu-stage-band {
+  fill: #e8b451;
+}
+
+/* The compositing base for the ramp. Transparent almost everywhere —
+   it exists for one case: a warm ramp on a cool card.
+
+   Alpha-blending gold over NC+'s blue card cannot produce gold. Measured
+   at the top of the ramp, gold over that blue comes out at 0.24
+   saturation (a khaki grey) versus 0.62 over a warm base — and khaki is
+   exactly what it looked like. Giving the plot its own dark warm base to
+   composite against fixes the hue at the source, and lifts the worst
+   band-label contrast from 3.9:1 to 4.6:1 as a bonus.
+
+   Light mode needs none of this: gold over white already comes out at
+   0.62 saturation. Neither does Midwest, whose green ramp over a green
+   card is already in the right family. */
+/* --gdu-stage-base is the effective background BEHIND the ramp, and
+   three things have to agree on it: the backdrop itself, the rules
+   between bands, and the halo behind any label drawn over the stack.
+   Before it existed the dividers stayed card-blue and striped the gold
+   chart with blue lines. One variable, three consumers, no drift. */
+:root {
+  --gdu-stage-base: var(--card-bg);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme])[data-brand="ncPlus"],
+  :root:not([data-theme])[data-brand="crows"] {
+    --gdu-stage-base: #241f14;
+  }
+}
+
+:root[data-theme="dark"][data-brand="ncPlus"],
+:root[data-theme="dark"][data-brand="crows"] {
+  --gdu-stage-base: #241f14;
+}
+
+.gdu-stage-backdrop {
+  fill: var(--gdu-stage-base);
+}
+
 /* A 2px surface-colored rule between adjacent steps of the ramp, so
    neighbouring bands stay separable without introducing a border hue. */
 .gdu-stage-divider {
-  stroke: var(--card-bg);
+  stroke: var(--gdu-stage-base);
   stroke-width: 2;
 }
 
@@ -621,6 +682,15 @@
    and the caption underneath says so in words. */
 .gdu-stage-band-label-anchored {
   font-weight: 800;
+}
+
+/* Same reasoning as the today label: any text drawn over the ramp needs
+   its halo to match what's actually behind it. */
+.gdu-stage-top-label {
+  paint-order: stroke;
+  stroke: var(--card-bg);
+  stroke-width: 3px;
+  stroke-linejoin: round;
 }
 
 .gdu-stage-band-sub,
@@ -652,13 +722,18 @@
   stroke-dasharray: 5 4;
 }
 
+/* The DASHED RULE stays danger-red — it's the alert. The label does not.
+   Red text sits at roughly 4:1 on white and 3.4:1 on the dark warm
+   backdrop, which is under the floor for 11px bold either way, and the
+   whole point of the label is that a number is legible. Ink for the
+   text, red for the mark it annotates. */
 .gdu-stage-today-label {
-  fill: var(--danger);
+  fill: var(--text);
   font-size: 11px;
   font-weight: 700;
   font-family: inherit;
   paint-order: stroke;
-  stroke: var(--card-bg);
+  stroke: var(--gdu-stage-base);
   stroke-width: 3px;
   stroke-linejoin: round;
 }
