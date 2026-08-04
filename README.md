@@ -1,4 +1,4 @@
-# GDU Calculator v1.4 (Beta)
+# GDU Calculator v1.5 (Beta)
 
 A hybrid GDU calculator for corn: set a field location, a planting date, and a
 hybrid (72 built in, or type your own numbers — any one of GDUs to silk, GDUs to
@@ -18,6 +18,26 @@ screenshot carries the whole answer:
 5. **Data** — every stage against every scenario
 6. **Frost Risk** — early/median freeze dates and a verdict
 7. **How these numbers were made** — method and provenance
+
+A share button sits left of the Settings gear on the results screen. **Print /
+Save as PDF** is the one that produces a real artifact — the print stylesheet
+forces light tokens (a dark-mode print is a black page), drops every control that
+can't be tapped on paper, and keeps cards and charts off page breaks. **Share…**
+uses `navigator.share` where it exists and is hidden where it doesn't, rather than
+shown-and-broken; **Copy summary** covers everything else.
+
+The shared text deliberately carries **no link to the specific result**. Inputs
+live in the device's own local storage, so a URL would open the recipient's app
+showing *their* last calculation — worse than no link, because it looks like it
+worked. The text carries the numbers; the PDF carries the charts.
+
+The GDU accumulation chart carries the active Brand View's logo as a faint
+watermark, bottom-right inside the plot. That corner is the one reliably empty
+region of that chart — every curve rises left to right — and the mark is
+`pointer-events: none` and `aria-hidden` so it never eats a crosshair drag or
+gets announced. Box sizing is driven by height with a 2.5:1 minimum width, so
+Midwest's 2.38:1 wordmark, NC+'s square diamond and Crow's 1.29:1 mark all render
+at the same visual size instead of one being a third the size of another.
 
 The accumulation chart and the stage chart answer different questions from the
 same numbers ("how does this year compare to normal" vs. "where is my corn and
@@ -54,7 +74,7 @@ npm run shots             # e2e plus screenshots into test/shots/
 * `test/unit_gdu.mjs` — 62 checks on the GDU math, the shipped hybrid catalog, the
   stage ladder and the rating estimator, all hand-worked from the formulas rather
   than snapshotted from a previous run.
-* `test/e2e_smoke.mjs` — 46 checks driving the real UI in headless Chromium with
+* `test/e2e_smoke.mjs` — 55 checks driving the real UI in headless Chromium with
   every weather/geocode call intercepted and served deterministic synthetic data.
 
 ## How it works
@@ -100,7 +120,12 @@ the median freeze date gets caught one year in two, which is not a pass.
 sheet and **reproduced exactly as supplied**. Nothing derives, smooths or
 sanity-corrects a GDU rating from relative maturity.
 
-The picker searches by variety or maturity and groups by RM. Picking a hybrid
+The picker searches by variety or maturity and is sorted shortest maturity
+first, with RM on each row's meta line rather than in section headings — most
+variety numbers already encode maturity (09-90 is a 109 day), so headings mostly
+repeated the row beneath them. Keeping RM on the row still covers the seven
+varieties whose names don't encode it (10T84, 42W96, 42U97, 5110, 77P13, 77A14,
+77C14). Picking a hybrid
 fills both GDU boxes and tags them "From hybrid list"; editing either value
 re-tags them "Edited", shows what the list said, and offers a one-tap reset — an
 edited number never keeps wearing the list's authority.

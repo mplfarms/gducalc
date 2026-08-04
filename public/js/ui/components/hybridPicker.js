@@ -11,6 +11,14 @@
 // Deliberately no "+ Add New" row (unlike searchListPicker.js): adding a
 // hybrid the catalog doesn't have means typing GDU ratings, which the
 // form behind this modal already does better. The empty state says so.
+//
+// The list is sorted by relative maturity but carries no RM section
+// headings — per explicit request. Most variety numbers already encode
+// maturity (09-90 is a 109 day, 77-70 a 77 day), so a heading above each
+// group mostly repeated what the row underneath already said. RM moved
+// onto the row's own meta line instead, which keeps it available for the
+// seven varieties whose names DON'T encode it (10T84, 42W96, 42U97,
+// 5110, 77P13, 77A14, 77C14) without a band of repeated headings.
 
 import { h, clear, debounceGuard } from "../dom.js";
 import { showCustomModal } from "./modal.js";
@@ -42,15 +50,7 @@ export function openHybridPicker(opts) {
       return;
     }
 
-    let lastRm = null;
     for (const hy of matches) {
-      // The list is sorted by maturity, so a sticky RM heading turns a
-      // 72-row list into something you can thumb through by maturity —
-      // which is how a hybrid actually gets chosen for a field.
-      if (hy.rm !== lastRm) {
-        lastRm = hy.rm;
-        listEl.appendChild(h("div", { className: "hybrid-picker-rm-head" }, `${hy.rm} day`));
-      }
       const selected = opts.value && hy.variety.toLowerCase() === String(opts.value).trim().toLowerCase();
       listEl.appendChild(
         h(
@@ -70,7 +70,7 @@ export function openHybridPicker(opts) {
           },
           [
             h("span", { className: "hybrid-picker-name" }, hy.variety),
-            h("span", { className: "hybrid-picker-gdu" }, `${hy.gduToSilk.toLocaleString()} silk · ${hy.gduToBlackLayer.toLocaleString()} black layer`),
+            h("span", { className: "hybrid-picker-gdu" }, `${hy.rm} day · ${hy.gduToSilk.toLocaleString()} silk · ${hy.gduToBlackLayer.toLocaleString()} black layer`),
           ]
         )
       );
@@ -98,7 +98,7 @@ export function openHybridPicker(opts) {
 
   const body = h("div", { className: "search-list-body" }, [
     input,
-    h("p", { className: "search-list-add-new-hint" }, `${catalog.getAll().length} hybrids, sorted by maturity. GDU ratings are loaded exactly as supplied — you can still edit them after picking.`),
+    h("p", { className: "search-list-add-new-hint" }, `${catalog.getAll().length} hybrids, shortest maturity first. GDU ratings are loaded exactly as supplied — you can still edit them after picking.`),
     listEl,
   ]);
 

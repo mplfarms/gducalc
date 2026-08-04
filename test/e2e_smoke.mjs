@@ -181,7 +181,15 @@ async function main() {
   await page.locator(".gdu-pick-hybrid-btn").click();
   await page.waitForSelector(".hybrid-picker-option");
   const rmHeads = await page.locator(".hybrid-picker-rm-head").count();
-  check("the picker groups by relative maturity", () => assert.ok(rmHeads > 10, `only ${rmHeads} RM headings`));
+  check("the picker has no RM section headings", () => assert.equal(rmHeads, 0));
+  const pickerRows = await page.locator(".hybrid-picker-option").allTextContents();
+  check("the picker is still sorted shortest maturity first", () => {
+    // Row meta reads "<rm> day · ...", so the RM sequence is readable
+    // straight off the rendered list.
+    const rms = pickerRows.map((t) => Number((t.match(/(\d+) day/) || [])[1])).filter(Number.isFinite);
+    assert.equal(rms.length, 72);
+    for (let i = 1; i < rms.length; i++) assert.ok(rms[i] >= rms[i - 1], `RM out of order at row ${i}: ${rms[i - 1]} then ${rms[i]}`);
+  });
   if (SHOTS) await page.screenshot({ path: path.join(SHOT_DIR, "06-hybrid-picker.png") });
 
   await page.fill('input[aria-label="Search hybrids"]', "09-90");
@@ -189,6 +197,7 @@ async function main() {
   const rowText = await page.locator(".hybrid-picker-option").first().textContent();
   check("search narrows to the matching variety with its GDU numbers", () => {
     assert.match(rowText, /09-90 PCE/);
+    assert.match(rowText, /109 day/);
     assert.match(rowText, /1,290 silk/);
     assert.match(rowText, /2,620 black layer/);
   });
@@ -442,6 +451,89 @@ async function main() {
   // Changing scenario must not disturb the accumulation chart above it.
   const accumStillThere = await page.locator(".gdu-chart-svg path.gdu-line").count();
   check("the accumulation chart survives a scenario change below it", () => assert.ok(accumStillThere >= 5));
+
+  // ---- brand watermark ----------------------------------------------
+  const wmCount = await page.locator("image.gdu-watermark").count();
+  check("exactly one watermark, on the accumulation chart only", () => assert.equal(wmCount, 1));
+  const wmInfo = await page.evaluate(() => {
+    const img = document.querySelector(".gdu-chart-svg image.gdu-watermark");
+    if (!img) return null;
+    const svgEl = img.ownerSVGElement;
+    const b = img.getBBox();
+    const vb = svgEl.viewBox.baseVal;
+    return {
+      href: img.getAttribute("href"),
+      opacity: Number(getComputedStyle(img).opacity),
+      pointerEvents: getComputedStyle(img).pointerEvents,
+      ariaHidden: img.getAttribute("aria-hidden"),
+      inBottomRight: b.x > vb.width * 0.5 && b.y > vb.height * 0.5,
+      insidePlot: b.x + b.width <= vb.width && b.y + b.height <= vb.height,
+    };
+  });
+  check("the watermark uses the active Brand View's logo", () => assert.equal(wmInfo.href, "/logos/ncplus.png"));
+  check("the watermark sits bottom-right, inside the plot", () => {
+    assert.equal(wmInfo.inBottomRight, true);
+    assert.equal(wmInfo.insidePlot, true);
+  });
+  check("the watermark is faint and non-interactive", () => {
+    assert.ok(wmInfo.opacity > 0 && wmInfo.opacity < 0.35, `opacity ${wmInfo.opacity}`);
+    assert.equal(wmInfo.pointerEvents, "none");
+    assert.equal(wmInfo.ariaHidden, "true");
+  });
+
+  // ---- share menu -----------------------------------------------------
+  await page.locator(".top-bar-btn-share").click();
+  await page.waitForSelector(".share-menu-panel");
+  const shareItems = await page.locator(".share-menu-item-label").allTextContents();
+  check("the share menu offers print and copy", () => {
+    assert.ok(shareItems.includes("Print / Save as PDF"), shareItems.join("|"));
+    assert.ok(shareItems.includes("Copy summary"), shareItems.join("|"));
+  });
+  if (SHOTS) await page.screenshot({ path: path.join(SHOT_DIR, "11-share-menu.png") });
+
+  // The summary text is what actually gets sent, so assert on its
+  // content — reached through the clipboard action, since results.js
+  // keeps the share context private.
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.getByText("Copy summary").click();
+  await page.waitForSelector(".toast-success");
+  const clip = await page.evaluate(() => navigator.clipboard.readText());
+  check("the copied summary carries the hybrid, field and stage dates", () => {
+    assert.match(clip, /GDU outlook/);
+    assert.match(clip, /Missouri Valley, IA/);
+    assert.match(clip, /1,290 GDU to silk/);
+    assert.match(clip, /black layer/);
+    assert.match(clip, /Median first 28 °F freeze/);
+  });
+
+  // ---- print layout ---------------------------------------------------
+  await page.emulateMedia({ media: "print" });
+  const printState = await page.evaluate(() => {
+    const vis = (sel) => {
+      const el = document.querySelector(sel);
+      return el ? getComputedStyle(el).display : "absent";
+    };
+    return {
+      topBar: vis(".top-bar"),
+      scenarioSelect: vis(".gdu-scenario-select"),
+      bodyBg: getComputedStyle(document.body).backgroundColor,
+      cardBg: getComputedStyle(document.querySelector(".card")).backgroundColor,
+      chartsStillThere: document.querySelectorAll(".gdu-chart-svg, .gdu-stage-chart-svg").length,
+      tablesStillThere: document.querySelectorAll(".gdu-table").length,
+    };
+  });
+  check("print hides the app chrome but keeps the charts and tables", () => {
+    assert.equal(printState.topBar, "none");
+    assert.equal(printState.scenarioSelect, "none");
+    assert.equal(printState.chartsStillThere, 2);
+    assert.equal(printState.tablesStillThere, 2);
+  });
+  check("print forces a white page even from dark mode", () => {
+    assert.equal(printState.bodyBg, "rgb(255, 255, 255)");
+    assert.equal(printState.cardBg, "rgb(255, 255, 255)");
+  });
+  if (SHOTS) await page.screenshot({ path: path.join(SHOT_DIR, "12-print.png"), fullPage: true });
+  await page.emulateMedia({ media: "screen" });
 
   // ---- dark mode ---------------------------------------------------
   await page.evaluate(() => localStorage.setItem("gdu.themeMode", JSON.stringify("dark")));

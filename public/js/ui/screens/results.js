@@ -18,8 +18,11 @@
 
 import { h, mount } from "../dom.js";
 import { createTopBar } from "../components/topBar.js";
+import { createShareButton } from "../components/shareMenu.js";
 import { navigate } from "../router.js";
 import * as inputStore from "../stores/inputStore.js";
+import * as brandStore from "../stores/brandStore.js";
+import { getBrand } from "../brand.js";
 import { loadTemperatureData, toSeries } from "../../core/weather.js";
 import { buildDailyIndex, offsetAtTarget } from "../../core/gdu.js";
 import { buildSeason, baselineYearsFor, BASELINE_YEARS } from "../../core/season.js";
@@ -40,6 +43,12 @@ let activeCharts = [];
 // not persisted, since it's a "what if" toggle rather than a setting.
 let activeScenarioKey = null;
 
+// What the share menu serialises. Populated once the weather has loaded
+// and the season is built; read at CLICK time rather than captured at
+// render time, so tapping share during the load can't hand out a
+// half-built object.
+let shareContext = null;
+
 function destroyCharts() {
   for (const c of activeCharts) c.destroy();
   activeCharts = [];
@@ -47,6 +56,7 @@ function destroyCharts() {
 
 export function render(container) {
   destroyCharts();
+  shareContext = null;
 
   const state = inputStore.getState();
   const hybridCheck = inputStore.validatedHybrid();
@@ -79,7 +89,12 @@ export function render(container) {
   mount(
     container,
     h("div", { className: "screen" }, [
-      createTopBar({ title: "GDU Outlook", onBack: () => navigate("calculator"), backLabel: "Back to inputs" }),
+      createTopBar({
+        title: "GDU Outlook",
+        onBack: () => navigate("calculator"),
+        backLabel: "Back to inputs",
+        right: createShareButton(() => shareContext),
+      }),
       body,
     ])
   );
@@ -176,6 +191,8 @@ async function loadAndPaint(container, body, state, hybrid) {
     lastObservedIso,
   });
 
+  shareContext = { season, hybrid, location: state.location, rows: season.rows };
+
   const cards = [];
   const status = statusCard(season, state, res);
   if (status) cards.push(status);
@@ -270,7 +287,7 @@ function chartCard(season, hybrid) {
   ]);
   // The chart measures its container, so it has to be attached first.
   requestAnimationFrame(() => {
-    if (holder.isConnected) activeCharts.push(renderGduChart(holder, season, hybrid));
+    if (holder.isConnected) activeCharts.push(renderGduChart(holder, season, hybrid, getBrand(brandStore.getState().selectedBrand)));
   });
   return card;
 }

@@ -85,16 +85,19 @@ function niceStep(rough) {
  * @param {HTMLElement} container
  * @param {Object} season output of buildSeason()
  * @param {{gduToSilk: number, gduToBlackLayer: number, hybridLabel: string}} hybrid
+ * @param {{logo: string, displayName: string}|null} [brand] the active Brand
+ *   View, for the watermark. Passed in rather than read from the store so
+ *   this module stays free of app state and testable on its own.
  * @returns {{destroy: () => void}}
  */
-export function renderGduChart(container, season, hybrid) {
+export function renderGduChart(container, season, hybrid, brand) {
   let observer = null;
 
   function draw() {
     const width = Math.max(280, container.clientWidth);
     const height = Math.round(Math.min(460, Math.max(260, width * 0.68)));
     container.textContent = "";
-    container.appendChild(buildSvg(width, height, season, hybrid));
+    container.appendChild(buildSvg(width, height, season, hybrid, brand));
   }
 
   draw();
@@ -113,7 +116,7 @@ export function renderGduChart(container, season, hybrid) {
   };
 }
 
-function buildSvg(width, height, season, hybrid) {
+function buildSvg(width, height, season, hybrid, brand) {
   const margin = { top: 14, right: 74, bottom: 30, left: 46 };
   const plotW = width - margin.left - margin.right;
   const plotH = height - margin.top - margin.bottom;
@@ -261,6 +264,43 @@ function buildSvg(width, height, season, hybrid) {
     });
     t.textContent = l.text;
     root.appendChild(t);
+  }
+
+  // ---- brand watermark -----------------------------------------
+  // Bottom-right, inside the plot. That corner is the one reliably empty
+  // region of THIS chart: every curve rises left-to-right, so the space
+  // under the coolest one at the right edge holds no data at any planting
+  // date or hybrid. Drawn before the crosshair so the hover layer stays
+  // on top, and marked aria-hidden + pointer-events:none so it is never
+  // announced to a screen reader or intercepts a drag.
+  if (brand && brand.logo) {
+    // Size the box from its HEIGHT, then give it enough width that every
+    // brand mark is height-limited rather than width-limited.
+    //
+    // The three logos have very different aspect ratios — Midwest's
+    // wordmark is 2.38:1, NC+'s diamond is 1:1, Crow's is 1.29:1 — and
+    // preserveAspectRatio="meet" fits the mark inside the box, so a
+    // square logo in a wide short box renders at the box HEIGHT while a
+    // wide logo renders at the box WIDTH. A single fixed box therefore
+    // draws NC+ at a third the size of Midwest. Making the box at least
+    // 2.5x as wide as it is tall puts all three on the height limit, so
+    // they come out visually the same size.
+    const markH = Math.min(46, plotH * 0.15);
+    const markW = Math.min(markH * 2.5, plotW * 0.4);
+    const mark = svg("image", {
+      class: "gdu-watermark",
+      href: brand.logo,
+      x: margin.left + plotW - markW - 4,
+      y: margin.top + plotH - markH - 6,
+      width: markW,
+      height: markH,
+      preserveAspectRatio: "xMaxYMax meet",
+      "aria-hidden": "true",
+    });
+    // Safari below 14 ignores `href` on SVG <image> and needs the
+    // namespaced xlink attribute; setting both is harmless everywhere.
+    mark.setAttributeNS("http://www.w3.org/1999/xlink", "xlink:href", brand.logo);
+    root.appendChild(mark);
   }
 
   // ---- hover crosshair -----------------------------------------

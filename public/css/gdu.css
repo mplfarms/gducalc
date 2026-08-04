@@ -521,20 +521,6 @@
 
 /* ---------- hybrid picker modal ---------- */
 
-.hybrid-picker-rm-head {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  padding: 6px 14px;
-  background: var(--bg);
-  border-bottom: 1px solid var(--border);
-  font-size: 0.7rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-muted);
-}
-
 /* Two lines per row: variety, then the numbers being chosen. Overrides
    .search-list-option's own row layout rather than replacing the class,
    so hover, selection and the 44px tap target all still come from the
@@ -815,4 +801,132 @@
   border-left: 3px solid var(--highlight);
   padding-left: 10px;
   margin-left: -10px;
+}
+
+/* ---------- brand watermark ---------- */
+
+/* Faint enough to read as a mark rather than a data element, and
+   non-interactive so it can never eat a crosshair drag. Slightly stronger
+   in dark mode: the same opacity over a dark card reads as almost
+   nothing. Printing lifts it further — see the print block below, where
+   the mark is the only thing identifying who produced the page. */
+.gdu-watermark {
+  opacity: 0.16;
+  pointer-events: none;
+}
+
+:root[data-theme="dark"] .gdu-watermark {
+  opacity: 0.2;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) .gdu-watermark {
+    opacity: 0.2;
+  }
+}
+
+/* ---------- share menu ---------- */
+
+.share-menu-item-label {
+  display: block;
+  font-weight: 700;
+}
+
+.share-menu-item-hint {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  line-height: 1.35;
+}
+
+.gdu-copy-fallback {
+  min-height: 220px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+}
+
+/* ---------- print ---------- */
+
+/* What gets emailed to a customer. Three jobs: force light tokens (a
+   dark-mode print is a black page and a dead ink cartridge), drop every
+   control that can't be tapped on paper, and stop cards splitting across
+   a page break mid-chart. */
+@media print {
+  :root,
+  :root[data-theme="dark"],
+  :root[data-theme="light"] {
+    --bg: #ffffff;
+    --card-bg: #ffffff;
+    --text: #16241c;
+    --text-muted: #5b6b60;
+    --border: rgba(0, 0, 0, 0.18);
+    --accent-strong: var(--accent);
+    color-scheme: light;
+  }
+
+  html,
+  body,
+  #app {
+    background: #ffffff !important;
+    min-height: 0;
+  }
+
+  /* Chrome and controls: not printable, and their absence is what makes
+     the page read as a report rather than a screenshot of an app. */
+  .top-bar,
+  .toast-container,
+  .modal-overlay,
+  .gdu-scenario-select,
+  .gdu-go-btn,
+  .btn,
+  .gdu-saved-list,
+  .gdu-pick-hybrid-btn {
+    display: none !important;
+  }
+
+  /* The scenario selector is hidden above, so its label would otherwise
+     be a dangling heading over nothing. */
+  .gdu-stage-section .field {
+    display: none !important;
+  }
+
+  .screen-body {
+    max-width: none;
+    padding: 0;
+    gap: 12px;
+  }
+
+  .card {
+    box-shadow: none;
+    border: 1px solid var(--border);
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* The stage chart is 620px of plot — on paper it wants its own page
+     rather than being sawn in half by a page break. */
+  .gdu-stage-chart-holder,
+  .gdu-chart-holder {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* Both charts are SVG and print as vectors; force them to the printed
+     column width rather than the screen width they were measured at. */
+  .gdu-chart-svg,
+  .gdu-stage-chart-svg {
+    width: 100% !important;
+    height: auto !important;
+  }
+
+  /* On paper the watermark is the only thing saying who produced this,
+     so it carries more weight than it does on screen. */
+  .gdu-watermark {
+    opacity: 0.22;
+  }
+
+  a[href]::after {
+    content: "";
+  }
 }
