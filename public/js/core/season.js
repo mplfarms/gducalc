@@ -204,15 +204,20 @@ export function buildSeason({ index, plantingIso, gduToSilk, gduToBlackLayer, la
       ["hot", "This season — hot finish"],
       ["cool", "This season — cool finish"],
     ]) {
-      rows.push(makeRow(`current-${key}`, label, currentFinishes[key], plantingIso, gduToSilk, gduToBlackLayer, knownEndOffset));
+      rows.push(
+        makeRow(`current-${key}`, label, currentFinishes[key], plantingIso, gduToSilk, gduToBlackLayer, knownEndOffset, observedEndOffset)
+      );
     }
   }
   rows.push(
-    makeRow("lastYear", `Last year (${plantingYear - 1}) actual`, lastYearAcc.cum, plantingIso, gduToSilk, gduToBlackLayer, SEASON_DAYS - 1),
-    makeRow("hot", "Abnormally hot year (90th pct)", env.p90, plantingIso, gduToSilk, gduToBlackLayer, SEASON_DAYS - 1),
-    makeRow("normal", `Normal (${BASELINE_YEARS}-yr median)`, env.p50, plantingIso, gduToSilk, gduToBlackLayer, SEASON_DAYS - 1),
-    makeRow("cool", "Abnormally cool year (10th pct)", env.p10, plantingIso, gduToSilk, gduToBlackLayer, SEASON_DAYS - 1)
+    makeRow("lastYear", `Last year (${plantingYear - 1}) actual`, lastYearAcc.cum, plantingIso, gduToSilk, gduToBlackLayer, SEASON_DAYS - 1, SEASON_DAYS - 1),
+    makeRow("hot", "Abnormally hot year (90th pct)", env.p90, plantingIso, gduToSilk, gduToBlackLayer, SEASON_DAYS - 1, -1),
+    makeRow("normal", `Normal (${BASELINE_YEARS}-yr median)`, env.p50, plantingIso, gduToSilk, gduToBlackLayer, SEASON_DAYS - 1, -1),
+    makeRow("cool", "Abnormally cool year (10th pct)", env.p10, plantingIso, gduToSilk, gduToBlackLayer, SEASON_DAYS - 1, -1)
   );
+
+  // ---- this season, collapsed to one honest answer per stage ----
+  const currentStage = knownEndOffset >= 0 ? summarizeCurrent(rows, plantingIso, observedEndOffset, knownEndOffset) : null;
 
   // ---- frost ----
   const killingFreeze = firstFreezeStats(index, years, 28, dateFns);
@@ -233,7 +238,16 @@ export function buildSeason({ index, plantingIso, gduToSilk, gduToBlackLayer, la
     observedEndOffset,
     lastKnownIso,
     lastObservedIso,
+    currentStage,
     yearsUsed: env.yearsUsed,
+    // How many years actually fed the REMAINING-season envelope — the one
+    // the three "this season" finishes are built from. It is not always
+    // the same as yearsUsed (a different window can be short of data at
+    // a different set of years), and if it collapses toward 1 the three
+    // finishes converge for a reason that has nothing to do with the
+    // weather. Surfaced so the UI can say so instead of showing three
+    // identical dates that look like a bug.
+    remainingYearsUsed: remainingEnv ? remainingEnv.yearsUsed : [],
     killingFreeze,
     lightFrost,
     gduToDate,
@@ -243,7 +257,34 @@ export function buildSeason({ index, plantingIso, gduToSilk, gduToBlackLayer, la
   };
 }
 
-function makeRow(key, label, cum, plantingIso, gduToSilk, gduToBlackLayer, solidThroughOffset) {
+/**
+ * What KIND of number a stage date is. This is the distinction the app
+ * was previously missing, and it is the whole reason three "this season"
+ * rows could show the same date and look broken:
+ *
+ *   "actual"    — the crop passed this stage on a day we have OBSERVED
+ *                 weather for. It already happened. It is not a
+ *                 prediction and it cannot differ between scenarios,
+ *                 because all three scenarios share the same history.
+ *   "forecast"  — inside the 16-day outlook. Barely uncertain, and again
+ *                 identical across scenarios, since they share the
+ *                 forecast too.
+ *   "projected" — past the last known day. This is the only region where
+ *                 a normal / hot / cool finish can possibly diverge.
+ *
+ * @param {number|null} offset
+ * @param {number} observedThroughOffset
+ * @param {number} knownThroughOffset
+ * @returns {"actual"|"forecast"|"projected"|null}
+ */
+function basisFor(offset, observedThroughOffset, knownThroughOffset) {
+  if (offset === null) return null;
+  if (offset <= observedThroughOffset) return "actual";
+  if (offset <= knownThroughOffset) return "forecast";
+  return "projected";
+}
+
+function makeRow(key, label, cum, plantingIso, gduToSilk, gduToBlackLayer, solidThroughOffset, observedThroughOffset) {
   const silkOffset = offsetAtTarget(cum, gduToSilk);
   const blOffset = offsetAtTarget(cum, gduToBlackLayer);
   const finalIdx = lastNonNull(cum);
@@ -253,10 +294,68 @@ function makeRow(key, label, cum, plantingIso, gduToSilk, gduToBlackLayer, solid
     silkOffset,
     silkIso: silkOffset === null ? null : addDays(plantingIso, silkOffset),
     silkIsProjected: silkOffset !== null && silkOffset > solidThroughOffset,
+    silkBasis: basisFor(silkOffset, observedThroughOffset, solidThroughOffset),
     blackLayerOffset: blOffset,
     blackLayerIso: blOffset === null ? null : addDays(plantingIso, blOffset),
     blackLayerIsProjected: blOffset !== null && blOffset > solidThroughOffset,
+    blackLayerBasis: basisFor(blOffset, observedThroughOffset, solidThroughOffset),
     seasonTotal: finalIdx === -1 ? null : cum[finalIdx],
+  };
+}
+
+/**
+ * Collapses the three "this season" rows into one answer per stage.
+ *
+ * The three finishes are NOT three independent predictions — they share
+ * every observed and forecast day and diverge only in the projected
+ * tail. Presenting them as three table rows implied a disagreement that
+ * often does not exist: a stage the crop already passed is one date, and
+ * printing it three times under "normal / hot / cool" reads as a fault
+ * in the app rather than as the arithmetic truth that history does not
+ * have scenarios.
+ *
+ * So: one date (the normal finish), a range where the scenarios actually
+ * differ, and an explicit basis saying whether the date is observation,
+ * forecast, or projection.
+ *
+ * @returns {{silk: StageSummary|null, blackLayer: StageSummary|null}}
+ * @typedef {Object} StageSummary
+ * @property {string} iso           the normal-finish date
+ * @property {number} offset
+ * @property {string} basis         "actual" | "forecast" | "projected"
+ * @property {string|null} earliestIso  hot finish (null if it never gets there)
+ * @property {string|null} latestIso    cool finish (null if it never gets there)
+ * @property {number|null} spreadDays   latest − earliest, null if either is unreached
+ * @property {boolean} reachedInEveryScenario
+ */
+function summarizeCurrent(rows, plantingIso, observedEndOffset, knownEndOffset) {
+  const byKey = {};
+  for (const r of rows) if (r.key.startsWith("current-")) byKey[r.key.slice("current-".length)] = r;
+  const build = (offsetField, isoField, basisField) => {
+    const normal = byKey.normal;
+    if (!normal || normal[offsetField] === null) return null;
+    const hot = byKey.hot ? byKey.hot[offsetField] : null;
+    const cool = byKey.cool ? byKey.cool[offsetField] : null;
+    const all = [hot, normal[offsetField], cool].filter((v) => v !== null);
+    const reachedInEveryScenario = hot !== null && cool !== null;
+    // Hot finishes earliest and cool latest, but take min/max rather than
+    // trusting that ordering — a degenerate envelope could tie them, and
+    // an assumption is a worse thing to ship than two extra comparisons.
+    const lo = Math.min(...all);
+    const hi = Math.max(...all);
+    return {
+      iso: normal[isoField],
+      offset: normal[offsetField],
+      basis: normal[basisField],
+      earliestIso: addDays(plantingIso, lo),
+      latestIso: reachedInEveryScenario ? addDays(plantingIso, hi) : null,
+      spreadDays: reachedInEveryScenario ? hi - lo : null,
+      reachedInEveryScenario,
+    };
+  };
+  return {
+    silk: build("silkOffset", "silkIso", "silkBasis"),
+    blackLayer: build("blackLayerOffset", "blackLayerIso", "blackLayerBasis"),
   };
 }
 

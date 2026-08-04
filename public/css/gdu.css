@@ -386,6 +386,8 @@
 }
 
 .gdu-badge-projected,
+.gdu-badge-actual,
+.gdu-badge-forecast,
 .gdu-badge-frost {
   font-size: 0.64rem;
   font-weight: 700;
@@ -395,6 +397,35 @@
   padding: 1px 7px;
   border: 1px solid var(--border);
   color: var(--text-muted);
+}
+
+/* "Reached" is the strongest claim the app makes — it means measured,
+   not modeled — so it is the only basis badge drawn in the brand accent
+   rather than muted grey. --accent-strong is the semantic foreground
+   token, so this stays legible in both themes and under every Brand
+   View without a per-brand override. The word carries the meaning on
+   its own; the color is reinforcement, not the signal. */
+.gdu-badge-actual {
+  color: var(--accent-strong);
+  border-color: var(--accent-strong);
+  font-weight: 800;
+}
+
+/* The hot-to-cool range under a projected date. This is the number that
+   actually answers "when will it black layer", so it is not styled as a
+   footnote — same size as the day count, but not muted away. */
+.gdu-stage-range {
+  font-size: 0.72rem;
+  color: var(--text);
+}
+
+.gdu-stage-range-warn {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.gdu-thin-envelope {
+  margin-top: 8px;
 }
 
 /* The frost badge is the one place a status color is used, and it ships

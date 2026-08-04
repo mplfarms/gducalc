@@ -11,7 +11,7 @@ import { dailyGdu, percentile, accumulate, envelopeFromCalendarDate, offsetAtTar
 import { addDays, daysBetween, isoForYear, isoToUtcMs, utcMsToIso, monthDayOf, formatShort } from "../public/js/core/dates.js";
 import { buildSeason, baselineYearsFor, SEASON_DAYS } from "../public/js/core/season.js";
 import { STAGE_LADDER, stagesForHybrid, datedStages, REFERENCE_SILK, REFERENCE_BLACK_LAYER } from "../public/js/core/stages.js";
-import { resolve as resolveHybrid, MODELS, RM_FITTED_MIN, RM_FITTED_MAX } from "../public/js/core/hybridEstimate.js";
+import { resolve as resolveHybrid, MODELS, RM_FITTED_MIN, RM_FITTED_MAX, FITTED_N } from "../public/js/core/hybridEstimate.js";
 
 let passed = 0;
 function test(name, fn) {
@@ -449,7 +449,7 @@ const catalogDoc = JSON.parse(fs.readFileSync(new URL("../public/data/hybrids.js
 
 test("the shipped catalog parses and has the expected row count", () => {
   assert.ok(Array.isArray(catalogDoc.hybrids));
-  assert.equal(catalogDoc.hybrids.length, 134);
+  assert.equal(catalogDoc.hybrids.length, 132);
 });
 
 test("every catalog row is well formed", () => {
@@ -728,7 +728,7 @@ test("the shipped models reproduce the quoted accuracy on the real catalog", () 
 });
 
 test("the RM outlier the app flags is still the only one in the list", () => {
-  // 89-58 SSPRORIB survived the 72 -> 134 refresh. If a data refresh ever
+  // 89-58 SSPRORIB survived the 72 -> 134 -> 132 refreshes. If a data refresh ever
   // introduces another, this fails and someone looks at it rather than
   // the app quietly flagging two hybrids nobody reviewed.
   const median = (a) => { const x = [...a].sort((p, q) => p - q); const m = Math.floor(x.length / 2); return x.length % 2 ? x[m] : (x[m - 1] + x[m]) / 2; };
@@ -757,6 +757,157 @@ test("an RM-only hybrid still produces a complete, ordered stage ladder", () => 
   }
   assert.equal(stages.find((x) => x.key === "silk").gdu, r.silk.value);
   assert.equal(stages.find((x) => x.key === "maturity").gdu, r.blackLayer.value);
+});
+
+// ---------------------------------------------------------------
+console.log("\ncatalog naming rules");
+// ---------------------------------------------------------------
+
+test("no bare-TRE varieties remain, and every TRERIB one does", () => {
+  // The bare-TRE rows were exact duplicates of their TRERIB counterparts
+  // (identical RM, silk and black layer), so they inflated the estimator
+  // fit by double-weighting two hybrids while adding nothing a user
+  // could pick between.
+  assert.deepEqual(catalogDoc.hybrids.filter((x) => /\sTRE$/.test(x.v)).map((x) => x.v), []);
+  assert.equal(catalogDoc.hybrids.filter((x) => /TRERIB$/.test(x.v)).length, 6);
+});
+
+test("trait suffixes are upper case throughout", () => {
+  // "13-22 Conv" sorted and read as a different trait from "CONV".
+  const suffixes = new Set(catalogDoc.hybrids.map((x) => x.v.split(" ").slice(1).join(" ")));
+  for (const suf of suffixes) {
+    assert.equal(suf, suf.toUpperCase(), `mixed-case trait suffix: "${suf}"`);
+  }
+  assert.ok(suffixes.has("CONV"));
+  assert.ok(!suffixes.has("Conv"));
+});
+
+test("the quoted fit size matches the catalog actually shipped", () => {
+  // The accuracy claim printed on four screens and in the PDF is "fitted
+  // on N hybrids". After two data refreshes three of those places were
+  // still saying 72. This is the mechanical guard: refresh the data
+  // without refitting and requoting, and the build fails here.
+  assert.equal(FITTED_N, catalogDoc.hybrids.length);
+});
+
+test("the catalog is sorted by maturity, then variety", () => {
+  const list = catalogDoc.hybrids;
+  for (let i = 1; i < list.length; i++) {
+    const a = list[i - 1];
+    const b = list[i];
+    assert.ok(b.rm > a.rm || (b.rm === a.rm && b.v >= a.v), `out of order at ${b.v} after ${a.v}`);
+  }
+});
+
+// ---------------------------------------------------------------
+console.log("\nthis-season stage summary");
+// ---------------------------------------------------------------
+
+// A fixture where every baseline year is IDENTICAL up to Aug 20 and then
+// gets its own constant rate, spread 10..30 GDU/day. The remaining-season
+// envelope therefore HAS to be wide, so if the three finishes ever
+// collapse here it is the splice that is broken, not the weather.
+function spreadFixture() {
+  const time = [];
+  const tmax = [];
+  const tmin = [];
+  for (let yr = 1996; yr <= 2026; yr++) {
+    const rate = 10 + (yr - 1996) * (20 / 29);
+    const days = (yr % 4 === 0 && yr % 100 !== 0) || yr % 400 === 0 ? 366 : 365;
+    for (let d = 0; d < days; d++) {
+      const iso = addDays(`${yr}-01-01`, d);
+      const g = iso.slice(5) < "08-21" ? 20 : rate;
+      time.push(iso);
+      tmax.push(50 + g);
+      tmin.push(50 + g);
+    }
+  }
+  const cut = time.indexOf("2026-08-04");
+  const slice = (a, from, to) => a.slice(from, to);
+  return {
+    observed: { time: slice(time, 0, cut + 1), tmax: slice(tmax, 0, cut + 1), tmin: slice(tmin, 0, cut + 1), source: "observed" },
+    forecast: { time: slice(time, cut + 1, cut + 17), tmax: slice(tmax, cut + 1, cut + 17), tmin: slice(tmin, cut + 1, cut + 17), source: "forecast" },
+  };
+}
+
+const spread = spreadFixture();
+const spreadSeason = buildSeason({
+  index: buildDailyIndex([spread.forecast, spread.observed]),
+  plantingIso: "2026-05-01",
+  gduToSilk: 1290,
+  gduToBlackLayer: 3000,
+  lastKnownIso: spread.forecast.time[spread.forecast.time.length - 1],
+  lastObservedIso: spread.observed.time[spread.observed.time.length - 1],
+});
+
+test("the projection splice actually spreads the three finishes apart", () => {
+  // The regression this guards: a splice bug (or a degenerate envelope)
+  // would make normal/hot/cool land on one date and look, from the
+  // outside, exactly like correct behaviour for a stage already reached.
+  const bl = (k) => spreadSeason.rows.find((r) => r.key === `current-${k}`).blackLayerIso;
+  assert.ok(bl("hot") < bl("normal"), `hot ${bl("hot")} should beat normal ${bl("normal")}`);
+  assert.ok(bl("normal") < bl("cool"), `normal ${bl("normal")} should beat cool ${bl("cool")}`);
+  assert.equal(spreadSeason.remainingYearsUsed.length, 30);
+});
+
+test("a stage the crop already passed is reported as actual, not predicted", () => {
+  // Silking at 1,290 GDU happens in observed data, so all three finishes
+  // MUST agree — history has no scenarios. The summary has to say that
+  // rather than leave three identical dates looking like a fault.
+  const silk = spreadSeason.currentStage.silk;
+  assert.equal(silk.basis, "actual");
+  assert.equal(silk.spreadDays, 0);
+  assert.ok(silk.iso < spreadSeason.lastObservedIso);
+});
+
+test("a projected stage carries the hot-to-cool range", () => {
+  const bl = spreadSeason.currentStage.blackLayer;
+  assert.equal(bl.basis, "projected");
+  assert.ok(bl.spreadDays > 0, "a projected date this far out must have a range");
+  assert.ok(bl.earliestIso < bl.iso && bl.iso < bl.latestIso);
+  assert.equal(bl.reachedInEveryScenario, true);
+});
+
+test("a stage inside the 16-day forecast is labelled forecast, not projection", () => {
+  // 20 GDU/day flat, so 2,300 GDU lands on day 115 - past the last
+  // observed day (95) but inside the forecast horizon (111).
+  const s = buildSeason({
+    index: buildDailyIndex([spread.forecast, spread.observed]),
+    plantingIso: "2026-05-01",
+    gduToSilk: 1290,
+    gduToBlackLayer: 2220,
+    lastKnownIso: spread.forecast.time[spread.forecast.time.length - 1],
+    lastObservedIso: spread.observed.time[spread.observed.time.length - 1],
+  });
+  assert.equal(s.currentStage.blackLayer.basis, "forecast");
+  assert.equal(s.currentStage.blackLayer.spreadDays, 0);
+});
+
+const buildWithBl = (bl) =>
+  buildSeason({
+    index: buildDailyIndex([spread.forecast, spread.observed]),
+    plantingIso: "2026-05-01",
+    gduToSilk: 1290,
+    gduToBlackLayer: bl,
+    lastKnownIso: spread.forecast.time[spread.forecast.time.length - 1],
+    lastObservedIso: spread.observed.time[spread.observed.time.length - 1],
+  });
+
+test("a stage a cool finish never reaches reports no range rather than a fake one", () => {
+  // 3,990 GDU is reached in a normal and a hot finish but not a cool
+  // one. Quoting a range would require inventing the cool end; the
+  // summary withholds it and flags the case instead, so the UI can say
+  // "not reached in a cool finish" rather than print a tidy interval
+  // that quietly drops the worst outcome.
+  const bl = buildWithBl(3990).currentStage.blackLayer;
+  assert.equal(bl.reachedInEveryScenario, false);
+  assert.equal(bl.latestIso, null);
+  assert.equal(bl.spreadDays, null);
+  assert.ok(bl.iso);
+});
+
+test("a stage no scenario reaches is reported as unreached, not as a date", () => {
+  assert.equal(buildWithBl(6000).currentStage.blackLayer, null);
 });
 
 console.log(`\n${passed} assertions passed.\n`);

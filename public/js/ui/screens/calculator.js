@@ -21,7 +21,7 @@ import { navigate } from "../router.js";
 import { lookupZip } from "../../core/location.js";
 import { openHybridPicker } from "../components/hybridPicker.js";
 import * as catalog from "../../core/hybridCatalog.js";
-import { resolve as resolveHybridInputs, sourceLabel, accuracyNote, RM_FITTED_MIN, RM_FITTED_MAX } from "../../core/hybridEstimate.js";
+import { resolve as resolveHybridInputs, sourceLabel, accuracyNote, RM_FITTED_MIN, RM_FITTED_MAX, FITTED_N } from "../../core/hybridEstimate.js";
 import { formatShort, todayIso, yearOf } from "../../core/dates.js";
 
 export function render(container) {
@@ -244,7 +244,7 @@ export function render(container) {
     }
     if (notes.length) {
       resolvedNote.appendChild(
-        h("p", { className: "gdu-resolved-accuracy" }, `Estimated values are ${notes.join("; ")}. Checked by leaving each of the 72 listed hybrids out of the fit in turn and predicting it — real out-of-sample error, not the fit's own memory.`)
+        h("p", { className: "gdu-resolved-accuracy" }, `Estimated values are ${notes.join("; ")}. Checked by leaving each of the ${FITTED_N} listed hybrids out of the fit in turn and predicting it — real out-of-sample error, not the fit's own memory.`)
       );
     }
     if (r.rmOutsideFit) {
@@ -419,7 +419,7 @@ export function render(container) {
     h("div", { className: "field" }, [
       h("label", { className: "field-label" }, "Relative Maturity (days)"),
       rmInput.input,
-      h("p", { className: "field-note" }, "Enough on its own — with RM and no GDU numbers, both get estimated from the 134 hybrids in the built-in list."),
+      h("p", { className: "field-note" }, `Enough on its own — with RM and no GDU numbers, both get estimated from the ${FITTED_N} hybrids in the built-in list.`),
     ]),
     h("div", { className: "gdu-two-col" }, [
       h("div", { className: "field" }, [h("label", { className: "field-label" }, "GDUs to Silk"), silkInput.input]),

@@ -1,7 +1,7 @@
-# GDU Calculator v2.0 (Beta)
+# GDU Calculator v2.1 (Beta)
 
 A hybrid GDU calculator for corn: set a field location, a planting date, and a
-hybrid (134 built in, or type your own numbers — any one of GDUs to silk, GDUs to
+hybrid (132 built in, or type your own numbers — any one of GDUs to silk, GDUs to
 black layer, or a relative maturity is enough), and get predicted stage dates for
 this season plus last year, a normal year, an abnormally hot year, and an
 abnormally cool year — with a frost-risk check on the end.
@@ -110,10 +110,10 @@ npm test                  # unit + end-to-end
 npm run shots             # e2e plus screenshots into test/shots/
 ```
 
-* `test/unit_gdu.mjs` — 63 checks on the GDU math, the shipped hybrid catalog, the
+* `test/unit_gdu.mjs` — 73 checks on the GDU math, the shipped hybrid catalog, the
   stage ladder and the rating estimator, all hand-worked from the formulas rather
   than snapshotted from a previous run.
-* `test/e2e_smoke.mjs` — 74 checks driving the real UI in headless Chromium with
+* `test/e2e_smoke.mjs` — 79 checks driving the real UI in headless Chromium with
   every weather/geocode call intercepted and served deterministic synthetic data.
 
 ## How it works
@@ -141,7 +141,16 @@ and is a real, actual season.
 16-day forecast, then a projection. The projection asks the same 30 years a
 narrower question — from the calendar date the forecast runs out, how much more
 heat did each year deliver? — and adds the 50th/90th/10th percentile of *that* to
-your actual accumulated total. This is why there are three "this season" rows.
+your actual accumulated total, producing a normal, a hot and a cool finish.
+
+Those three share every observed and forecast day, so they can only diverge
+after the last known day. The results table therefore shows **one** "this
+season" row per stage carrying (a) the date, (b) whether it is `reached`
+(observed — it already happened), `in forecast` (inside the 16-day outlook) or
+`projected`, and (c) a hot-to-cool range, but only where one genuinely exists.
+They used to be three separate rows, which printed the same date three times
+whenever a stage fell inside the known window and read as a fault in the app
+rather than as the arithmetic truth that history does not have scenarios.
 
 It is deliberately **not** built by summing "normal daily rates": percentiles
 don't add, and stacking 90th-percentile days would produce a season hotter than
@@ -155,16 +164,26 @@ the median freeze date gets caught one year in two, which is not a pass.
 
 ## The hybrid list
 
-134 hybrids ship in `public/data/hybrids.json`, built from the grower-supplied
+132 hybrids ship in `public/data/hybrids.json`, built from the grower-supplied
 GDU worksheet (`data-src-gdu-worksheet.xlsx`, also flattened to
 `data-src-hybrids.csv`) and **reproduced exactly as supplied**. Nothing derives,
 smooths or sanity-corrects a GDU rating from relative maturity.
 
 This list replaced an earlier 72-hybrid one wholesale — no merge, no leftovers.
-**The estimator was refit at the same time**, because it is fitted *on* this data:
-silk-from-RM's slope moved from 7.55 to 8.18, which is about 26 GDU at the long
-end of the range. Shipping the old coefficients against the new list would have
-been quietly wrong.
+Two later cleanups took it to 132: the two bare-`TRE` entries were dropped (each
+was an exact duplicate of its `TRERIB` counterpart — same RM, same silk, same
+black layer — so they added nothing to pick between while double-weighting two
+hybrids in the fit), and `13-22 Conv` was normalised to `CONV` so every trait
+suffix is upper case. A unit test now asserts both rules, plus the sort order.
+
+**The estimator is refit on every one of these changes**, because it is fitted
+*on* this data: silk-from-RM's slope moved from 7.55 to 8.18 across the big
+refresh, about 26 GDU at the long end of the range. Shipping old coefficients
+against a new list would be quietly wrong. `FITTED_N` in
+`core/hybridEstimate.js` is the single source for the "fitted on N hybrids"
+claim printed on four screens and in the PDF — it was quoted as a literal in
+five places and three of them were still saying 72 two refreshes later. A unit
+test pins `FITTED_N` to the catalog's real length.
 
 The picker searches by variety or maturity and is sorted shortest maturity
 first, with RM on each row's meta line rather than in section headings — most
@@ -233,32 +252,32 @@ the alert; the number just has to be legible.
 
 Any **one** of GDUs to silk, GDUs to black layer, or relative maturity is enough
 to calculate. Whatever is missing is filled in by ordinary least squares fitted on
-all 134 hybrids in the built-in list, exactly as supplied — nothing trimmed to
+all 132 hybrids in the built-in list, exactly as supplied — nothing trimmed to
 flatter the fit, 89-58 included.
 
 Errors below are **leave-one-out**: each hybrid was predicted by a model fitted on
-the other 133 and never on itself. In-sample error reads about 10% lower and would
+the other 131 and never on itself. In-sample error reads about 10% lower and would
 be measuring the fit's memory rather than its accuracy.
 
-| Estimate | median err | p90 | worst |
-|---|---|---|---|
-| silk from black layer | 25 GDU | 58 | 115 |
-| black layer from silk | 44 GDU | 171 | 267 |
-| silk from RM | 29 GDU | 58 | 187 |
-| black layer from RM | 45 GDU | 146 | 389 |
+| Estimate | median err | p90 | worst | R² |
+|---|---|---|---|---|
+| silk from black layer | 25 GDU | 59 | 115 | 0.852 |
+| black layer from silk | 44 GDU | 171 | 266 | 0.852 |
+| silk from RM | 30 GDU | 58 | 187 | 0.810 |
+| black layer from RM | 47 GDU | 147 | 389 | 0.868 |
 
-**A real GDU number is preferred over RM**, though the 134-hybrid refit narrowed
-the case for it and that's worth saying plainly. Silk from a known black layer
-(25 GDU) still clearly beats silk from RM (29). For black layer the two are now
-effectively tied — 44 from a known silk against 45 from RM — where on the old
+**A real GDU number is preferred over RM**, though the refit on the bigger list
+narrowed the case for it and that's worth saying plainly. Silk from a known black
+layer (25 GDU) still clearly beats silk from RM (30). For black layer the two are
+close — 44 from a known silk against 47 from RM — where on the old 72-hybrid
 list silk was the clear winner. The preference stands on the grounds that a
 paired GDU rating is specific to *that* hybrid while RM only locates it in a
 maturity band holding a 200-plus GDU spread, not on a meaningful accuracy gap.
 `resolve()` in `core/hybridEstimate.js` enforces the precedence and a unit test
 pins it.
 
-**RM is the weakest input.** R² is 0.87 for black layer and the worst hybrid in
-the list — 89-58 SSPRORIB, rated 2,592 where the RM-89 trend says 2,203 — is 389
+**RM is the weakest input.** R² is 0.868 for black layer and the worst hybrid in
+the list — 89-58 SSPRORIB, rated 2,592 where the RM-89 trend says 2,211 — is 381
 GDU off, roughly two and a half weeks of grain fill. It's a reasonable default
 when the tech sheet isn't at hand; it is not a substitute for it.
 

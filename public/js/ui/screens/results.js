@@ -29,7 +29,7 @@ import { buildSeason, baselineYearsFor, BASELINE_YEARS } from "../../core/season
 import { addDays, daysBetween, formatShort, yearOf } from "../../core/dates.js";
 import { renderGduChart, buildChartLegend } from "../chart.js";
 import { renderStageChart, currentStage } from "../stageChart.js";
-import { sourceLabel, accuracyNote } from "../../core/hybridEstimate.js";
+import { sourceLabel, accuracyNote, FITTED_N } from "../../core/hybridEstimate.js";
 import { stagesForHybrid, datedStages } from "../../core/stages.js";
 
 // Both charts render into containers they have to measure, so each hands
@@ -334,15 +334,37 @@ function chartCard(season, hybrid) {
 // ---------------------------------------------------------------
 // Scenario table
 // ---------------------------------------------------------------
+// The three "this season" scenarios share every observed and forecast
+// day and can only diverge in the projected tail. Printing them as three
+// table rows made identical values look like a fault in the app when
+// they were arithmetic necessity — a stage the crop already passed has
+// exactly one date, and history does not have scenarios. So this season
+// gets ONE row per stage, carrying the date, what kind of number it is,
+// and the hot-to-cool range where there genuinely is one.
 function tableCard(season, hybrid) {
-  const rows = season.rows.map((row) => {
-    const isCurrent = row.key.startsWith("current-");
-    return h("tr", { className: isCurrent ? "gdu-row-current" : "" }, [
-      h("td", { className: "gdu-scenario-name" }, row.label),
-      h("td", {}, stageCell(row.silkIso, row.silkOffset, row.silkIsProjected)),
-      h("td", {}, stageCell(row.blackLayerIso, row.blackLayerOffset, row.blackLayerIsProjected, season, hybrid)),
-    ]);
-  });
+  const cs = season.currentStage;
+  const rows = [];
+
+  if (cs) {
+    rows.push(
+      h("tr", { className: "gdu-row-current" }, [
+        h("td", { className: "gdu-scenario-name" }, `This season (${season.plantingYear})`),
+        h("td", {}, currentStageCell(cs.silk, season)),
+        h("td", {}, currentStageCell(cs.blackLayer, season)),
+      ])
+    );
+  }
+
+  for (const row of season.rows) {
+    if (row.key.startsWith("current-")) continue;
+    rows.push(
+      h("tr", {}, [
+        h("td", { className: "gdu-scenario-name" }, row.label),
+        h("td", {}, stageCell(row.silkIso, row.silkOffset, row.silkIsProjected)),
+        h("td", {}, stageCell(row.blackLayerIso, row.blackLayerOffset, row.blackLayerIsProjected, season, hybrid)),
+      ])
+    );
+  }
 
   return h("section", { className: "card" }, [
     h("h3", { className: "section-header" }, "Predicted Stage Dates"),
@@ -352,25 +374,84 @@ function tableCard(season, hybrid) {
         h("tbody", {}, rows),
       ]),
     ]),
-    h(
-      "p",
-      { className: "field-note" },
-      "“Projected” dates depend on weather that hasn't happened yet — the three “this season” rows differ only in how the rest of the year turns out. Treat the spread between them as the real answer, not any single date."
-    ),
+    h("p", { className: "field-note" }, STAGE_BASIS_NOTE),
+    thinEnvelopeWarning(season),
   ]);
+}
+
+const STAGE_BASIS_NOTE =
+  "The “this season” row shows one date because that is how many the data supports. A stage marked reached already happened — it is read off observed weather, so a hot or cool rest-of-year cannot move it. Forecast means it lands inside the 16-day outlook, which is near-certain but not measured. Only a projected date carries a range, and that range (hot finish to cool finish) is the honest answer, not the single date in front of it. The rows below it are whole seasons for comparison: last year as it actually ran, and what the 30-year record does from this same planting date.";
+
+// A percentile band built from a handful of years is not a percentile
+// band. If the remaining-season envelope thins out, the three finishes
+// converge for a data reason rather than a weather reason, and the app
+// has to say so rather than let it read as agreement.
+const MIN_TRUSTWORTHY_YEARS = 20;
+function thinEnvelopeWarning(season) {
+  const n = (season.remainingYearsUsed || []).length;
+  if (season.currentStage === null || n === 0 || n >= MIN_TRUSTWORTHY_YEARS) return null;
+  return h(
+    "p",
+    { className: "gdu-verdict gdu-verdict-warn gdu-thin-envelope" },
+    `Only ${n} of the ${BASELINE_YEARS} baseline years had complete data for the rest of this season, so the hot and cool finishes are built from a thin sample. Treat the range as indicative rather than a real 10th-to-90th percentile.`
+  );
+}
+
+function basisBadge(basis) {
+  switch (basis) {
+    case "actual":
+      return h("span", { className: "gdu-badge-actual" }, "reached");
+    case "forecast":
+      return h("span", { className: "gdu-badge-forecast" }, "in forecast");
+    case "projected":
+      return h("span", { className: "gdu-badge-projected" }, "projected");
+    default:
+      return null;
+  }
+}
+
+function currentStageCell(summary, season) {
+  if (!summary) return h("span", { className: "gdu-never" }, "not reached");
+  const parts = [
+    h("span", { className: "gdu-stage-date" }, formatShort(summary.iso, { withYear: true })),
+    h("span", { className: "gdu-stage-days" }, `day ${summary.offset + 1}`),
+    basisBadge(summary.basis),
+  ];
+
+  if (summary.basis === "projected") {
+    if (!summary.reachedInEveryScenario) {
+      parts.push(h("span", { className: "gdu-stage-range gdu-stage-range-warn" }, "not reached in a cool finish"));
+    } else if (summary.spreadDays > 0) {
+      parts.push(
+        h("span", { className: "gdu-stage-range" }, `${formatShort(summary.earliestIso)} – ${formatShort(summary.latestIso)} (hot to cool finish)`)
+      );
+    } else {
+      // Genuinely no spread: the crossing is close enough to the last
+      // known day that a hot and a cool rest-of-year land on the same
+      // calendar date. Say that outright — silence here is what made
+      // three identical rows look broken.
+      parts.push(h("span", { className: "gdu-stage-range" }, "hot and cool finishes land on the same day"));
+    }
+  }
+
+  parts.push(frostBadge(summary.iso, season));
+  return h("div", { className: "gdu-stage-cell" }, parts.filter(Boolean));
 }
 
 function stageCell(iso, offset, isProjected, season, hybrid) {
   if (!iso) return h("span", { className: "gdu-never" }, "not reached");
   const parts = [h("span", { className: "gdu-stage-date" }, formatShort(iso, { withYear: true })), h("span", { className: "gdu-stage-days" }, `day ${offset + 1}`)];
   if (isProjected) parts.push(h("span", { className: "gdu-badge-projected" }, "projected"));
-  // Flag a black layer date that lands after the median killing freeze —
-  // see this file's header for why that's a warning, not a footnote.
-  if (season && season.killingFreeze && season.killingFreeze.medianMonthDay) {
-    const freezeIso = `${yearOf(iso)}-${season.killingFreeze.medianMonthDay}`;
-    if (iso > freezeIso) parts.push(h("span", { className: "gdu-badge-frost" }, "after median freeze"));
-  }
-  return h("div", { className: "gdu-stage-cell" }, parts);
+  parts.push(frostBadge(iso, season));
+  return h("div", { className: "gdu-stage-cell" }, parts.filter(Boolean));
+}
+
+// Flag a stage date that lands after the median killing freeze — see this
+// file's header for why that's a warning, not a footnote.
+function frostBadge(iso, season) {
+  if (!season || !season.killingFreeze || !season.killingFreeze.medianMonthDay) return null;
+  const freezeIso = `${yearOf(iso)}-${season.killingFreeze.medianMonthDay}`;
+  return iso > freezeIso ? h("span", { className: "gdu-badge-frost" }, "after median freeze") : null;
 }
 
 // ---------------------------------------------------------------
@@ -651,7 +732,7 @@ function methodCard(season, res, state, hybrid) {
       h("li", {}, "GDU = (min(daily high, 86 °F) + max(daily low, 50 °F)) ÷ 2 − 50, the modified base-50/86 method US seed companies rate hybrids on. A day below 50 °F counts 0, never a negative; heat above 86 °F adds nothing."),
       h("li", {}, "Accumulation starts on the planting date itself."),
       h("li", {}, `Normal, hot and cool are the 50th, 90th and 10th percentiles of accumulation across ${yrs.length} complete years (${yearRange}) at this exact grid point — an envelope, not a replay of any one year.`),
-      h("li", {}, "The three “this season” rows share identical observed and forecast data and differ only in how the remaining days are assumed to go."),
+      h("li", {}, "The three rest-of-season finishes — normal, hot and cool — share identical observed and forecast data and differ only in how the remaining days are assumed to go. They are collapsed into one “this season” row: a date the crop has already passed cannot differ between them, and only a projected date gets a hot-to-cool range."),
       h("li", {}, `Temperatures: ERA5 reanalysis via Open-Meteo for history and the current season through ${formatShort(season.lastObservedIso, { withYear: true })}, plus Open-Meteo's 16-day forecast through ${formatShort(season.lastKnownIso)}.`),
       h("li", {}, `Grid point: ${state.location.lat.toFixed(4)}, ${state.location.lon.toFixed(4)}.`),
       hybrid ? null : h("li", {}, "No hybrid was entered, so no stage dates are shown — the curves are the heat itself. Add a hybrid on the input screen for silk and black layer predictions."),
@@ -665,7 +746,7 @@ function methodCard(season, res, state, hybrid) {
               })
               .filter(Boolean)
               .join(" ") +
-              " Those figures come from an ordinary least-squares fit on all 134 hybrids in the built-in list, with error measured by leaving each hybrid out of the fit and predicting it — so it's out-of-sample error, not the fit describing itself. RM is the weakest basis: it explains 87% of the variation in black layer, and the worst hybrid in the list sits 389 GDU off its maturity's trend, which is about two and a half weeks of grain fill. Use the real ratings when you can get them.",
+              ` Those figures come from an ordinary least-squares fit on all ${FITTED_N} hybrids in the built-in list, with error measured by leaving each hybrid out of the fit and predicting it — so it's out-of-sample error, not the fit describing itself. RM is the weakest basis: it explains 87% of the variation in black layer, and the worst hybrid in the list sits 389 GDU off its maturity's trend, which is about two and a half weeks of grain fill. Use the real ratings when you can get them.`,
           ])
         : null,
       res.forecastError ? h("li", { className: "gdu-method-warn" }, `The 16-day forecast failed to load (${res.forecastError}), so the projection starts from the last observed day instead.`) : null,

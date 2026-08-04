@@ -221,7 +221,7 @@ async function main() {
   // ---- built-in hybrid list ------------------------------------------
   await page.waitForSelector(".gdu-pick-hybrid-btn:not([disabled])", { timeout: 10000 });
   const pickLabel = await page.locator(".gdu-pick-hybrid-btn").textContent();
-  check("the hybrid list loads and reports its size", () => assert.match(pickLabel, /Choose from Hybrid List \(134\)/));
+  check("the hybrid list loads and reports its size", () => assert.match(pickLabel, /Choose from Hybrid List \(132\)/));
 
   await page.locator(".gdu-pick-hybrid-btn").click();
   await page.waitForSelector(".hybrid-picker-option");
@@ -232,7 +232,7 @@ async function main() {
     // Row meta reads "<rm> day · ...", so the RM sequence is readable
     // straight off the rendered list.
     const rms = pickerRows.map((t) => Number((t.match(/(\d+) day/) || [])[1])).filter(Number.isFinite);
-    assert.equal(rms.length, 134);
+    assert.equal(rms.length, 132);
     for (let i = 1; i < rms.length; i++) assert.ok(rms[i] >= rms[i - 1], `RM out of order at row ${i}: ${rms[i - 1]} then ${rms[i]}`);
   });
   if (SHOTS) await page.screenshot({ path: path.join(SHOT_DIR, "06-hybrid-picker.png") });
@@ -328,7 +328,7 @@ async function main() {
   let resolvedText = await page.locator(".gdu-resolved-note").textContent();
   check("black layer is estimated from an entered silk rating", () => {
     assert.match(resolvedText, /estimated from GDUs to silk/);
-    assert.match(resolvedText, /2,579 GDU/); // 2.3396*1290 - 438.76 = 2578.3
+    assert.match(resolvedText, /2,580 GDU/); // 2.3416*1290 - 440.73 = 2579.9
   });
 
   await page.fill('input[aria-label="GDUs to silk"]', "");
@@ -337,7 +337,7 @@ async function main() {
   resolvedText = await page.locator(".gdu-resolved-note").textContent();
   check("silk is estimated from an entered black layer rating", () => {
     assert.match(resolvedText, /estimated from GDUs to black layer/);
-    assert.match(resolvedText, /1,299 GDU/); // 0.364*2620 + 345.32 = 1299.0
+    assert.match(resolvedText, /1,299 GDU/); // 0.3638*2620 + 345.58 = 1298.7
   });
 
   await page.fill('input[aria-label="GDUs to black layer"]', "");
@@ -346,8 +346,8 @@ async function main() {
   resolvedText = await page.locator(".gdu-resolved-note").textContent();
   check("both are estimated from RM alone", () => {
     assert.match(resolvedText, /estimated from 105 day RM/);
-    assert.match(resolvedText, /1,276 GDU/); // 8.1771*105 + 417.48 = 1276.1
-    assert.match(resolvedText, /2,554 GDU/); // 21.4643*105 + 300.28 = 2554.0
+    assert.match(resolvedText, /1,276 GDU/); // 8.1761*105 + 417.37 = 1276.0
+    assert.match(resolvedText, /2,554 GDU/); // 21.479*105 + 298.89 = 2554.2
   });
   const estTags = await page.locator(".gdu-tag-estimated").count();
   check("both estimated values carry an est. tag", () => assert.equal(estTags, 2));
@@ -398,8 +398,27 @@ async function main() {
   await page.waitForSelector(".gdu-table", { timeout: 20000 });
   await page.waitForSelector(".gdu-chart-svg");
 
+  // One collapsed "this season" row + 4 whole-season comparison rows.
+  // The three finishes used to be three rows; they shared every observed
+  // and forecast day, so whenever a stage fell inside the known window
+  // they printed the same date three times and read as a bug.
   const rowCount = await page.locator(".gdu-table:not(.gdu-data-table) tbody tr").count();
-  check("every scenario has a row (3 this-season + 4 historical)", () => assert.equal(rowCount, 7));
+  check("this season is one row, with four historical rows below it", () => assert.equal(rowCount, 5));
+  const currentRows = await page.locator("tr.gdu-row-current").count();
+  check("exactly one row is the current season", () => assert.equal(currentRows, 1));
+  const currentText = await page.locator("tr.gdu-row-current").textContent();
+  check("the current-season row states what kind of number each date is", () => {
+    // Every stage date must be labelled reached / in forecast /
+    // projected — an unlabelled date is the ambiguity this whole change
+    // exists to remove.
+    const badges = (currentText.match(/reached|in forecast|projected/g) || []).length;
+    assert.ok(badges >= 2, `expected a basis on both stages, got: ${currentText}`);
+  });
+  check("a stage inside the known window shows no scenario range", () => {
+    // Both stages land inside observed/forecast in this fixture. That is
+    // precisely the case that used to print three identical rows.
+    assert.ok(!/hot to cool finish/.test(currentText), `unexpected range on a known-window date: ${currentText}`);
+  });
 
   const seriesCount = await page.locator(".gdu-chart-svg path.gdu-line").count();
   check("the chart draws every series", () => assert.ok(seriesCount >= 5, `only ${seriesCount} line segments drawn`));
@@ -674,6 +693,30 @@ async function main() {
   });
   check("the watermark follows the Brand View too", () => assert.equal(midwestWatermark, "/logos/midwest.png"));
   if (SHOTS) await page.screenshot({ path: path.join(SHOT_DIR, "13-midwest-dark.png"), fullPage: true });
+
+  // ---- a genuinely projected stage must carry a range -----------------
+  // The complaint that started this: normal / hot / cool showing one date.
+  // When the stage really is past the last known day the three finishes
+  // MUST separate, and the row has to show that spread rather than a
+  // lone date. A long hybrid pushes black layer well into the projection.
+  await page.evaluate(() => { window.location.hash = "#/calculator"; });
+  await page.waitForSelector('input[aria-label="GDUs to black layer"]');
+  await page.fill('input[aria-label="GDUs to black layer"]', "3400");
+  await page.waitForTimeout(150);
+  await page.getByRole("button", { name: "Calculate GDUs" }).click();
+  await page.waitForSelector(".gdu-table", { timeout: 20000 });
+  const projectedRow = await page.locator("tr.gdu-row-current").textContent();
+  check("a projected stage shows the hot-to-cool range, not a bare date", () => {
+    assert.match(projectedRow, /projected/);
+    assert.match(projectedRow, /hot to cool finish/);
+  });
+  const rangeText = await page.locator("tr.gdu-row-current .gdu-stage-range").last().textContent();
+  check("the two ends of the range are different dates", () => {
+    const m = rangeText.match(/^(.+?) – (.+?) \(/);
+    assert.ok(m, `unparseable range: ${rangeText}`);
+    assert.notEqual(m[1], m[2], `hot and cool finishes are identical: ${rangeText}`);
+  });
+  if (SHOTS) await page.screenshot({ path: path.join(SHOT_DIR, "15-projected-range.png"), fullPage: true });
 
   // ---- no hybrid at all: ZIP + planting date only ---------------------
   // The whole point is that a grower with no tech sheet in hand can still

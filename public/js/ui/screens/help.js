@@ -9,6 +9,7 @@ import { h, mount } from "../dom.js";
 import { createTopBar } from "../components/topBar.js";
 import { navigate, rememberedOriginFor } from "../router.js";
 import { BASELINE_YEARS } from "../../core/season.js";
+import { FITTED_N } from "../../core/hybridEstimate.js";
 
 function section(title, paragraphs) {
   return h("section", { className: "card help-section" }, [
@@ -40,7 +41,7 @@ export function render(container) {
         ]),
         section("The current season and its projection", [
           "This season's line is observed data up to the last day on the books, then the 16-day forecast, then a projection.",
-          "The projection is built by asking the same 30 years a narrower question: starting from the calendar date where the forecast runs out, how much more heat did each year deliver? The 50th, 90th and 10th percentiles of THAT are added onto your actual accumulated total. That's why there are three “this season” rows — they share identical real data and differ only in how the rest of the year is assumed to go.",
+          "The projection is built by asking the same 30 years a narrower question: starting from the calendar date where the forecast runs out, how much more heat did each year deliver? The 50th, 90th and 10th percentiles of THAT are added onto your actual accumulated total, giving a normal, a hot and a cool finish. Those three share identical real data, so they can only differ after the last known day — which is why a stage the crop has already passed shows one date with no range, and only a projected stage shows a hot-to-cool spread.",
           "This matters more than it sounds. Summing “normal daily rates” instead would be wrong, because percentiles don't add: stacking 90th-percentile days on top of each other produces a season hotter than any 90th-percentile season on record.",
         ]),
         section("Frost", [
@@ -56,7 +57,7 @@ export function render(container) {
           "The hybrid GDU ratings come from the built-in hybrid list (loaded exactly as supplied on the grower's own sheet, never derived from relative maturity) or from whatever you typed. If a rating on the list looks unusual for its maturity the app says so when you pick it — but it never changes the number, because a hybrid that breaks the usual RM-to-GDU pattern is a real thing and quietly 'fixing' one would be worse than showing it.",
         ]),
         section("Estimating a missing rating", [
-          "Any one of the three inputs is enough to calculate: GDUs to silk, GDUs to black layer, or a relative maturity. Whatever is missing gets estimated from a least-squares fit on all 134 hybrids in the built-in list, and every estimated value is labeled “est.” on every screen it appears on.",
+          `Any one of the three inputs is enough to calculate: GDUs to silk, GDUs to black layer, or a relative maturity. Whatever is missing gets estimated from a least-squares fit on all ${FITTED_N} hybrids in the built-in list, and every estimated value is labeled “est.” on every screen it appears on.`,
           "A real GDU number always beats relative maturity as the basis. Measured by holding each hybrid out of the fit and predicting it — real out-of-sample error, not the fit describing itself — silk from a known black layer lands within 25 GDU half the time versus 29 from RM; for black layer the two are effectively tied at 44 and 45. A paired GDU rating is specific to that hybrid, while RM only places it in a maturity band that holds a 200-plus GDU spread. So the app reaches for RM only when neither GDU number is available.",
           "Relative maturity is the weakest of the three. It explains 87% of the variation in black layer across the list, and one hybrid — 89-58 SSPRORIB, rated 2,592 where the RM-89 trend says 2,203 — sits 389 GDU off, which is roughly two and a half weeks of grain fill. An RM-only estimate is a sensible default when you don't have the sheet in front of you. It is not a substitute for the sheet.",
           "The fit covers 77 to 118 day hybrids, because that is the range the list spans. Enter an RM outside that and the app will still calculate, but it says on screen that it is extrapolating past its data.",

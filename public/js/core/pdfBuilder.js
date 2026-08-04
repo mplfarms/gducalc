@@ -45,7 +45,7 @@
 // product rather than a generic export.
 
 import { addDays, daysBetween, formatShort } from "./dates.js";
-import { sourceLabel } from "./hybridEstimate.js";
+import { sourceLabel, FITTED_N } from "./hybridEstimate.js";
 
 const PAGE_W = 612;
 const PAGE_H = 792;
@@ -593,18 +593,37 @@ export function buildPdf({ jsPDF, season, hybrid, location, brand, logoDataUrl, 
     doc.line(MARGIN, y, MARGIN + CONTENT_W, y);
     y += 4;
 
+    // This season is ONE row carrying a date, what kind of number it is,
+    // and the hot-to-cool range where one exists — the same collapse the
+    // results screen does, and for the same reason: three rows repeating
+    // a date the crop already passed reads as a broken report.
+    const cs = season.currentStage;
+    if (cs) {
+      const silkLines = summaryLines(cs.silk);
+      const blLines = summaryLines(cs.blackLayer);
+      const rowH = 8 + 9 * Math.max(silkLines.length, blLines.length);
+      ensureSpace(rowH + 6);
+      setFill(accent);
+      doc.rect(MARGIN - 4, y - 1, 2, rowH - 2, "F");
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8.5);
+      setText(INK);
+      doc.text(doc.splitTextToSize(`This season (${season.plantingYear})`, cols[0] - 6)[0], MARGIN, y + 8);
+      drawSummaryCell(silkLines, MARGIN + cols[0]);
+      drawSummaryCell(blLines, MARGIN + cols[0] + cols[1]);
+      y += rowH;
+      setStroke([238, 238, 238]);
+      doc.line(MARGIN, y, MARGIN + CONTENT_W, y);
+      y += 3;
+    }
+
     for (const row of season.rows) {
+      if (row.key.startsWith("current-")) continue;
       ensureSpace(20);
-      const isCurrent = row.key.startsWith("current-");
-      if (isCurrent) {
-        setFill(accent);
-        doc.rect(MARGIN - 4, y - 1, 2, 14, "F");
-      }
-      doc.setFont("helvetica", isCurrent ? "bold" : "normal");
+      doc.setFont("helvetica", "normal");
       doc.setFontSize(8.5);
       setText(INK);
       doc.text(doc.splitTextToSize(row.label, cols[0] - 6)[0], MARGIN, y + 8);
-      doc.setFont("helvetica", "normal");
       doc.text(row.silkIso ? formatShort(row.silkIso, { withYear: true }) : "not reached", MARGIN + cols[0], y + 8);
       doc.text(row.blackLayerIso ? formatShort(row.blackLayerIso, { withYear: true }) : "not reached", MARGIN + cols[0] + cols[1], y + 8);
       y += 15;
@@ -613,10 +632,44 @@ export function buildPdf({ jsPDF, season, hybrid, location, brand, logoDataUrl, 
       y += 3;
     }
     y += 4;
+
+    const thin = (season.remainingYearsUsed || []).length;
+    if (cs && thin > 0 && thin < 20) {
+      paragraph(
+        `Note: only ${thin} baseline years had complete data for the rest of this season, so the hot and cool finishes come from a thin sample. Treat the range as indicative.`,
+        { size: 7, gap: 3, style: "bold", color: INK }
+      );
+    }
     paragraph(
-      "The three “this season” rows share identical observed and forecast data and differ only in how the rest of the year turns out — treat the spread between them as the answer, not any single date.",
+      "A date marked “reached” is read off observed weather — it already happened, so a hot or cool rest-of-year cannot move it. “In forecast” lands inside the 16-day outlook. Only a “projected” date carries a hot-to-cool range, and that range is the answer, not the single date above it. The rows beneath are whole seasons for comparison.",
       { size: 7, gap: 4 }
     );
+
+    function summaryLines(s) {
+      if (!s) return [["not reached", false]];
+      const label = s.basis === "actual" ? "reached" : s.basis === "forecast" ? "in forecast" : "projected";
+      const lines = [[`${formatShort(s.iso, { withYear: true })}  (${label})`, true]];
+      if (s.basis === "projected") {
+        if (!s.reachedInEveryScenario) lines.push(["not reached in a cool finish", false]);
+        else if (s.spreadDays > 0) lines.push([`${formatShort(s.earliestIso)} - ${formatShort(s.latestIso)}`, false]);
+        else lines.push(["hot and cool finishes tie", false]);
+      }
+      return lines;
+    }
+
+    function drawSummaryCell(lines, x) {
+      let ly = y + 8;
+      for (const [text, bold] of lines) {
+        doc.setFont("helvetica", bold ? "bold" : "normal");
+        doc.setFontSize(bold ? 8.5 : 7.2);
+        setText(bold ? INK : MUTED);
+        doc.text(text, x, ly);
+        ly += 9;
+      }
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8.5);
+      setText(INK);
+    }
   }
 
   function drawStageChart() {
@@ -726,7 +779,7 @@ export function buildPdf({ jsPDF, season, hybrid, location, brand, logoDataUrl, 
         if (src) parts.push(`${name} ${rv.value.toLocaleString()} GDU was ${src}`);
       }
       lines.push(
-        `${parts.join("; ")}. Estimates come from a least-squares fit on all 134 hybrids in the built-in list, with error measured by holding each hybrid out. Relative maturity is the weakest basis — the worst sits 389 GDU off its maturity's trend, about two and a half weeks of grain fill.`
+        `${parts.join("; ")}. Estimates come from a least-squares fit on all ${FITTED_N} hybrids in the built-in list, with error measured by holding each hybrid out. Relative maturity is the weakest basis — the worst sits 389 GDU off its maturity's trend, about two and a half weeks of grain fill.`
       );
     }
     lines.push("GDU is a heat model, not a crop model. It knows nothing about drought, saturated soils, replant, hail, disease or nitrogen — any of which can move real silk and black layer dates well off these numbers.");
