@@ -28,14 +28,17 @@ export function downloadBlob(blob, filename) {
  * @param {Blob} blob
  * @param {string} filename
  * @param {string} mime
+ * @param {{title?: string, text?: string}} [opts] `text` rides along in
+ *   the share sheet, so a message app gets the headline numbers in the
+ *   body with the PDF attached rather than a bare attachment.
  * @returns {Promise<"shared"|"downloaded"|"cancelled">}
  */
-export async function shareOrDownload(blob, filename, mime) {
+export async function shareOrDownload(blob, filename, mime, opts) {
   try {
     const file = new File([blob], filename, { type: mime });
     if (navigator.canShare && navigator.share && navigator.canShare({ files: [file] })) {
       try {
-        await navigator.share({ files: [file], title: filename });
+        await navigator.share({ files: [file], title: (opts && opts.title) || filename, text: opts && opts.text });
         return "shared";
       } catch (e) {
         if (e && e.name === "AbortError") return "cancelled";

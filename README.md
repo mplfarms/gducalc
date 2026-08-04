@@ -1,4 +1,4 @@
-# GDU Calculator v1.7 (Beta)
+# GDU Calculator v1.9 (Beta)
 
 A hybrid GDU calculator for corn: set a field location, a planting date, and a
 hybrid (72 built in, or type your own numbers — any one of GDUs to silk, GDUs to
@@ -19,11 +19,17 @@ screenshot carries the whole answer:
 6. **Frost Risk** — early/median freeze dates and a verdict
 7. **How these numbers were made** — method and provenance
 
-A share button sits left of the Settings gear on the results screen, offering
-**Share PDF**, **Print** and **Copy summary**.
+A share button sits left of the Settings gear on the results screen. **One tap,
+one outcome**: it builds a two-page branded report (`core/pdfBuilder.js`) and
+hands it to the OS share sheet as a file where that exists, falling back to a
+download. No intermediate menu — a menu whose first item is what everyone wants
+is a tax on getting there.
 
-**Share PDF** builds a three-page branded report (`core/pdfBuilder.js`) and hands
-it to the OS share sheet as a file where that exists, falling back to a download.
+The plain-text summary still gets built; it rides along as the share sheet's
+`text`, so a message app gets the headline numbers in the body with the PDF
+attached rather than a bare attachment. (An earlier version also offered Print
+and Copy Summary from a menu. The print stylesheet is still in `gdu.css` and
+still correct — restoring those needs a menu again, not new plumbing.)
 Both charts are drawn as **vector**, not screenshotted. The shortcut — serialise
 the on-screen SVG and rasterise it — was rejected twice over: the SVGs take every
 color from CSS custom properties and the watermark from an external `<image href>`,
@@ -34,7 +40,15 @@ Layout matches Corn Plot Harvest's PDF — US Letter at 612×792 pt, 36 pt margi
 Helvetica — with section headers in white on a filled brand-accent bar, the same
 treatment as the app's own cards.
 
-Two things worth knowing if you edit it:
+**Two pages is a hard target**, not an aspiration — one sheet double-sided is
+what gets handed to a grower. Every block is sized against a budget of 694 pt of
+usable height per page (792 less two 36 pt margins and the 26 pt footer), and the
+two charts are the flexible part: they shrink before any caveat gets cut, and
+grow to fill the sheet when there's room. Two tests fail if it runs to three —
+one on a fully-specified hybrid, one on an RM-estimated one, which carries an
+extra callout and an extra method bullet and is the variant most likely to spill.
+
+Two more things worth knowing if you edit it:
 
 * **jsPDF is loaded on demand**, not on page load — a 356 KB library has no
   business being fetched by someone checking a silk date in a pickup. The pinned
@@ -44,10 +58,6 @@ Two things worth knowing if you edit it:
   as something else without erroring. U+2212 MINUS came out as a double quote, so
   "−203 GDU" read as `"203 GDU`. `pdfSafe()` maps the handful of offenders to
   ASCII, and `doc.text` is wrapped once so no call site can miss it.
-
-**Print** stays as a secondary; the print stylesheet forces light tokens (a
-dark-mode print is a black page), drops every control, and keeps cards off page
-breaks.
 
 The shared text deliberately carries **no link to the specific result**. Inputs
 live in the device's own local storage, so a URL would open the recipient's app
@@ -97,7 +107,7 @@ npm run shots             # e2e plus screenshots into test/shots/
 * `test/unit_gdu.mjs` — 62 checks on the GDU math, the shipped hybrid catalog, the
   stage ladder and the rating estimator, all hand-worked from the formulas rather
   than snapshotted from a previous run.
-* `test/e2e_smoke.mjs` — 64 checks driving the real UI in headless Chromium with
+* `test/e2e_smoke.mjs` — 68 checks driving the real UI in headless Chromium with
   every weather/geocode call intercepted and served deterministic synthetic data.
 
 ## How it works
@@ -161,6 +171,16 @@ is generic (`rmOutlierNote` in `core/hybridCatalog.js`) and fires for anything
 more than 250 GDU off the median of hybrids within ±2 RM days.
 
 Variety names display verbatim, with no Brand View prefix applied.
+
+## Location is ZIP only
+
+Device GPS was built and then removed, per explicit request, and the reasoning
+holds up: a seed rep is usually **not** standing in the field being calculated —
+they're at the shop or driving to the next customer, so "here" is the wrong answer
+more often than the right one. And the weather behind all of this is a 6-to-15
+mile grid, on which a GPS fix and the ZIP centroid for the same township return
+byte-identical numbers. It cost a permission prompt and an HTTPS-only code path
+to be no more accurate than typing five digits.
 
 ## The stage ramp's color
 
@@ -267,7 +287,6 @@ on what's known, estimate between, and say which is which.
 | History + current season | Open-Meteo `archive-api` (ERA5 reanalysis) | 1940→today, ~9–25 km grid, free, no key |
 | 16-day outlook | Open-Meteo `forecast` | free, no key |
 | ZIP → lat/lon | Zippopotam.us | free, no key |
-| GPS → "City, ST" label | BigDataCloud reverse-geocode-client | cosmetic only; failure leaves the coordinate intact |
 
 One 30-year pull is ~250 KB and ~2.5 s, cached per location in `localStorage`
 until the end of the calendar day it was fetched. The service worker caches the

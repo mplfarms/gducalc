@@ -18,7 +18,7 @@ import { BRANDS, getBrand } from "../brand.js";
 import * as brandStore from "../stores/brandStore.js";
 import * as inputStore from "../stores/inputStore.js";
 import { navigate } from "../router.js";
-import { lookupZip, requestDeviceLocation } from "../../core/location.js";
+import { lookupZip } from "../../core/location.js";
 import { openHybridPicker } from "../components/hybridPicker.js";
 import * as catalog from "../../core/hybridCatalog.js";
 import { resolve as resolveHybridInputs, sourceLabel, accuracyNote, RM_FITTED_MIN, RM_FITTED_MAX } from "../../core/hybridEstimate.js";
@@ -44,37 +44,15 @@ export function render(container) {
     const loc = inputStore.getState().location;
     locationValueEl.textContent = "";
     if (!loc) {
-      locationValueEl.appendChild(h("span", { className: "gdu-location-empty" }, "No field location set yet."));
+      locationValueEl.appendChild(h("span", { className: "gdu-location-empty" }, "Enter a ZIP code to set the field location."));
       return;
     }
     locationValueEl.appendChild(h("div", { className: "gdu-location-name" }, loc.label));
     locationValueEl.appendChild(
-      h("div", { className: "gdu-location-coords" }, `${loc.lat.toFixed(4)}, ${loc.lon.toFixed(4)} · ${loc.source === "gps" ? "device GPS" : "ZIP centroid"}`)
+      h("div", { className: "gdu-location-coords" }, `${loc.lat.toFixed(4)}, ${loc.lon.toFixed(4)} · ZIP centroid`)
     );
   }
   paintLocation();
-
-  const gpsBtn = h(
-    "button",
-    {
-      type: "button",
-      className: "btn btn-secondary btn-block",
-      onclick: async () => {
-        gpsBtn.disabled = true;
-        setStatus("Getting your location…", "locating");
-        const res = await requestDeviceLocation();
-        gpsBtn.disabled = false;
-        if (!res.ok) {
-          setStatus(res.error, "failure");
-          return;
-        }
-        inputStore.setLocation(res.location);
-        paintLocation();
-        setStatus(`Location set to ${res.location.label}.`, "success");
-      },
-    },
-    "Use My Location"
-  );
 
   const zipInput = h("input", {
     className: "text-input",
@@ -118,17 +96,15 @@ export function render(container) {
   const locationCard = h("section", { className: "card" }, [
     h("h3", { className: "section-header" }, "Field Location"),
     locationValueEl,
-    statusEl,
-    gpsBtn,
-    h("div", { className: "gdu-or-divider" }, "or"),
     h("div", { className: "field" }, [
       h("label", { className: "field-label" }, "ZIP Code"),
       h("div", { className: "gdu-inline-row" }, [zipInput, zipBtn]),
     ]),
+    statusEl,
     h(
       "p",
       { className: "field-note" },
-      "Weather comes from a gridded reanalysis about 6 to 15 miles per cell, so a ZIP centroid and a GPS pin inside the same township usually return identical numbers."
+      "Weather comes from a gridded reanalysis roughly 6 to 15 miles per cell, so every field in the same township returns the same numbers — a ZIP is as precise as this data gets."
     ),
   ]);
 

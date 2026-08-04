@@ -88,6 +88,11 @@ function dailyPayload(times) {
 
 const TODAY = new Date().toISOString().slice(0, 10);
 
+/** Counts /Type /Page objects, excluding /Pages. */
+function countPdfPages(buf) {
+  return (buf.toString("latin1").match(/\/Type\s*\/Page[^s]/g) || []).length;
+}
+
 async function main() {
   const server = await serve();
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -173,6 +178,9 @@ async function main() {
   check("NC+ Brand View applies its own chrome color", () => assert.equal(chrome.toLowerCase(), "#215aa8"));
 
   // ---- inputs ------------------------------------------------------
+  const gpsButtons = await page.getByRole("button", { name: "Use My Location" }).count();
+  check("device location is gone; ZIP is the only way in", () => assert.equal(gpsButtons, 0));
+
   await page.fill('input[aria-label="ZIP code"]', "51555");
   await page.getByRole("button", { name: "Look Up" }).click();
   await page.waitForSelector(".location-status-success");
@@ -189,6 +197,26 @@ async function main() {
   );
   await page.reload({ waitUntil: "networkidle" });
   await page.waitForSelector(".screen-body");
+
+  // The shared stylesheet resets `font: inherit` on button/input/textarea
+  // but not select, so the Brand box used to render at the browser's own
+  // control font and read as a different, smaller field.
+  const boxMetrics = await page.evaluate(() => {
+    const g = (el) => {
+      const r = el.getBoundingClientRect();
+      const c = getComputedStyle(el);
+      return { h: Math.round(r.height), font: c.fontSize, appearance: c.appearance };
+    };
+    return {
+      select: g(document.querySelector('select[aria-label="Brand"]')),
+      input: g(document.querySelector('input[placeholder="e.g. 09-90 PCE"]')),
+    };
+  });
+  check("the Brand select matches the text inputs", () => {
+    assert.equal(boxMetrics.select.h, boxMetrics.input.h, "height");
+    assert.equal(boxMetrics.select.font, boxMetrics.input.font, "font size");
+    assert.equal(boxMetrics.select.appearance, "none", "native chrome should be replaced");
+  });
 
   // ---- built-in hybrid list ------------------------------------------
   await page.waitForSelector(".gdu-pick-hybrid-btn:not([disabled])", { timeout: 10000 });
@@ -343,6 +371,17 @@ async function main() {
     assert.match(methodEstimate, /out-of-sample/);
   });
   if (SHOTS) await page.screenshot({ path: path.join(SHOT_DIR, "10-rm-only.png"), fullPage: true });
+
+  // The estimated path adds a callout and an extra method bullet, so it
+  // is the one most likely to spill onto a third page. Check it too.
+  const estDownloadPromise = page.waitForEvent("download", { timeout: 30000 });
+  await page.locator(".top-bar-btn-share").click();
+  const estDownload = await estDownloadPromise;
+  const estPdfPath = path.join(SHOT_DIR, "gdu-outlook-estimated.pdf");
+  fs.mkdirSync(SHOT_DIR, { recursive: true });
+  await estDownload.saveAs(estPdfPath);
+  const estPages = countPdfPages(fs.readFileSync(estPdfPath));
+  check("an RM-estimated report also fits on two sheets", () => assert.equal(estPages, 2));
 
   // Back to the full, unambiguous hybrid for the remaining checks — RM
   // included, since the RM-only section above left 105 in the box and
@@ -505,27 +544,21 @@ async function main() {
     assert.equal(wmInfo.ariaHidden, "true");
   });
 
-  // ---- share menu -----------------------------------------------------
-  await page.locator(".top-bar-btn-share").click();
-  await page.waitForSelector(".share-menu-panel");
-  const shareItems = await page.locator(".share-menu-item-label").allTextContents();
-  check("the share menu leads with the PDF", () => {
-    assert.deepEqual(shareItems, ["Share PDF", "Print", "Copy summary"]);
-  });
-  if (SHOTS) await page.screenshot({ path: path.join(SHOT_DIR, "11-share-menu.png") });
+  // ---- share: one tap, straight to the PDF ----------------------------
+  const menusBefore = await page.locator(".share-menu-panel").count();
+  check("there is no share menu to get through", () => assert.equal(menusBefore, 0));
 
-  // ---- the PDF itself -------------------------------------------------
   // Headless Chromium has no navigator.share, so shareOrDownload falls
   // through to a plain download — which is the path to assert on anyway,
   // since it's what every desktop browser does.
   const downloadPromise = page.waitForEvent("download", { timeout: 30000 });
-  await page.getByText("Share PDF").click();
+  await page.locator(".top-bar-btn-share").click();
   let download;
   try {
     download = await downloadPromise;
   } catch (e) {
     const toastNow = await page.locator(".toast-message").allTextContents();
-    throw new Error(`no download; toasts on screen: ${JSON.stringify(toastNow)}; console: ${JSON.stringify(consoleErrors.slice(-3))}`);
+    throw new Error(`no download; toasts: ${JSON.stringify(toastNow)}; console: ${JSON.stringify(consoleErrors.slice(-3))}`);
   }
   const pdfPath = path.join(SHOT_DIR, "gdu-outlook.pdf");
   fs.mkdirSync(SHOT_DIR, { recursive: true });
@@ -544,27 +577,23 @@ async function main() {
     assert.equal(pdfBuf.subarray(0, 5).toString(), "%PDF-");
     assert.ok(pdfBuf.length > 20000, `only ${pdfBuf.length} bytes`);
   });
-  const pdfText = pdfBuf.toString("latin1");
-  const pageCount = (pdfText.match(/\/Type\s*\/Page[^s]/g) || []).length;
-  check("the PDF fits three pages", () => assert.equal(pageCount, 3));
+  // Two pages is a hard requirement, not a nicety — it's one sheet
+  // double-sided, which is what gets handed to a grower.
+  const pageCount = countPdfPages(pdfBuf);
+  check("the PDF fits on two sheets", () => assert.equal(pageCount, 2));
 
-  // The summary text is what actually gets sent, so assert on its
-  // content — reached through the clipboard action, since results.js
-  // keeps the share context private. Choosing an action closes the menu,
-  // so it has to be reopened after the PDF step above.
-  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
-  await page.locator(".top-bar-btn-share").click();
-  await page.waitForSelector(".share-menu-panel");
-  await page.getByText("Copy summary").click();
-  await page.waitForSelector(".toast-success");
-  const clip = await page.evaluate(() => navigator.clipboard.readText());
-  check("the copied summary carries the hybrid, field and stage dates", () => {
-    assert.match(clip, /GDU outlook/);
-    assert.match(clip, /Missouri Valley, IA/);
-    assert.match(clip, /1,290 GDU to silk/);
-    assert.match(clip, /black layer/);
-    assert.match(clip, /Median first 28 °F freeze/);
+  const footer = pdfBuf.toString("latin1");
+  check("the footer says GDU Calculator, not a URL", () => {
+    assert.ok(!/gducalc\.mplfarms\.com/.test(footer), "the old URL is still in the footer");
   });
+
+  // The summary text still exists — it rides along as the share sheet's
+  // body text so a message gets the numbers, not a bare attachment.
+  const summaryText = await page.evaluate(async () => {
+    const mod = await import("/js/ui/components/shareMenu.js");
+    return typeof mod.buildSummary === "function" ? "present" : "missing";
+  });
+  check("the plain-text summary is still built for the share sheet", () => assert.equal(summaryText, "present"));
 
   // ---- print layout ---------------------------------------------------
   await page.emulateMedia({ media: "print" });

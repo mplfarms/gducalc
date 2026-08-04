@@ -1,8 +1,19 @@
 // src/core/pdfBuilder.js
 //
-// Builds the shareable PDF: a two-page report carrying the same numbers,
+// Builds the shareable PDF: a TWO-PAGE report carrying the same numbers,
 // the same two charts and the same caveats as the results screen, laid
 // out for paper and for the active Brand View.
+//
+// Two pages is a hard target, not an aspiration — it's one sheet printed
+// double-sided, which is what actually gets handed to a grower. Every
+// block is sized against a budget of 694 pt of usable height per page
+// (792 less two 36 pt margins and the 26 pt footer), and the two charts
+// are the flexible part: if something has to give, they shrink before
+// the caveats get cut — and when there IS room, they take it, so the two
+// sheets come out full rather than half empty. Two tests fail if the
+// output runs to three: one on a fully-specified hybrid, one on an
+// RM-estimated one, which carries an extra callout and an extra method
+// bullet and is the variant most likely to spill.
 //
 // ---------------------------------------------------------------
 // Why the charts are drawn rather than screenshotted
@@ -247,11 +258,11 @@ export function buildPdf({ jsPDF, season, hybrid, location, brand, logoDataUrl, 
   y += 13;
 
   // ---- hybrid ratings + status ------------------------------------
+  // Field and planting date are NOT repeated here — the title block three
+  // lines up already carries both, and on a two-page budget a duplicated
+  // row costs a line of the frost caveat later.
   sectionHeader("The Hybrid");
-  const ratingRows = [
-    ["Field", location.label],
-    ["Planted", formatShort(season.plantingIso, { withYear: true })],
-  ];
+  const ratingRows = [];
   if (hybrid.rm) ratingRows.push(["Relative maturity", `${hybrid.rm} day`]);
   ratingRows.push(
     ["GDUs to silk", `${hybrid.gduToSilk.toLocaleString()}${labelSuffix(hybrid.silk, hybrid.rm)}`],
@@ -261,7 +272,7 @@ export function buildPdf({ jsPDF, season, hybrid, location, brand, logoDataUrl, 
 
   if (hybrid.anyEstimated) {
     calloutBox(
-      "Some of this hybrid's ratings were estimated from the built-in list, not read off a tech sheet. Every date in this report inherits that — see the method note at the end.",
+      "Some ratings were estimated from the built-in list, not read off a tech sheet. Every date here inherits that — see the method note.",
       hexToRgb(brand ? brand.highlight : "#FEBE10")
     );
   }
@@ -273,11 +284,11 @@ export function buildPdf({ jsPDF, season, hybrid, location, brand, logoDataUrl, 
       [vs === null ? "—" : `${vs >= 0 ? "+" : "−"}${Math.abs(Math.round(vs)).toLocaleString()}`, vs >= 0 ? "GDU ahead of normal" : "GDU behind normal"],
       [String(season.observedEndOffset + 1), "days since planting"],
     ]);
-    paragraph(`Observed through ${formatShort(season.lastObservedIso, { withYear: true })}, then the 16-day forecast, then projected.`);
+    paragraph(`Observed through ${formatShort(season.lastObservedIso, { withYear: true })}, then the 16-day forecast, then projected.`, { gap: 4 });
   }
 
   // ---- accumulation chart -----------------------------------------
-  sectionHeader("GDU Accumulation", 200);
+  sectionHeader("GDU Accumulation", 204);
   drawAccumulationChart();
 
   // ---- predicted stage dates --------------------------------------
@@ -286,8 +297,11 @@ export function buildPdf({ jsPDF, season, hybrid, location, brand, logoDataUrl, 
 
   // ---- stages ------------------------------------------------------
   // Header + caption + the whole 360pt chart travel together.
-  sectionHeader("Growth Stages", 400);
-  paragraph(`Dates shown for: ${scenarioLabel}. Planting, Silks and Maturity sit exactly on the hybrid's own numbers; every stage between them is scaled from Iowa State's published GDU ladder and is an estimate.`);
+  sectionHeader("Growth Stages", 416);
+  paragraph(
+    `Dates shown for: ${scenarioLabel}. Planting, Silks and Maturity sit exactly on the hybrid's own numbers; every stage between them is scaled from Iowa State's published GDU ladder and is an estimate.`,
+    { size: 7, gap: 4 }
+  );
   drawStageChart();
 
   // ---- frost -------------------------------------------------------
@@ -296,7 +310,7 @@ export function buildPdf({ jsPDF, season, hybrid, location, brand, logoDataUrl, 
 
   // ---- method ------------------------------------------------------
   sectionHeader("How These Numbers Were Made");
-  for (const line of methodLines()) paragraph(`•  ${line}`, { gap: 3 });
+  for (const line of methodLines()) paragraph(`•  ${line}`, { size: 7.2, gap: 2 });
 
   // ---- footers -----------------------------------------------------
   const pages = doc.getNumberOfPages();
@@ -307,7 +321,7 @@ export function buildPdf({ jsPDF, season, hybrid, location, brand, logoDataUrl, 
     doc.setFont("helvetica", "normal");
     doc.setFontSize(7.5);
     setText(MUTED);
-    const left = `${brand ? brand.displayName : "GDU Calculator"}  ·  gducalc.mplfarms.com  ·  generated ${formatShort(generatedOn, { withYear: true })}  ·  ${appVersion}`;
+    const left = `${brand ? brand.displayName : "GDU Calculator"}  ·  GDU Calculator  ·  generated ${formatShort(generatedOn, { withYear: true })}  ·  ${appVersion}`;
     doc.text(left, MARGIN, PAGE_H - MARGIN - 5);
     doc.text(`Page ${p} of ${pages}`, MARGIN + CONTENT_W, PAGE_H - MARGIN - 5, { align: "right" });
   }
@@ -405,8 +419,8 @@ export function buildPdf({ jsPDF, season, hybrid, location, brand, logoDataUrl, 
   }
 
   function drawAccumulationChart() {
-    const h = 196;
-    ensureSpace(h + 40);
+    const h = 200;
+    ensureSpace(h + 34);
     const plot = { x: MARGIN + 34, y, w: CONTENT_W - 34 - 62, h: h - 22 };
 
     const series = SERIES.map((s) => ({ ...s, scenario: season.scenarios.find((x) => x.key === s.key) })).filter((s) => s.scenario);
@@ -524,12 +538,12 @@ export function buildPdf({ jsPDF, season, hybrid, location, brand, logoDataUrl, 
 
     drawWatermark(plot.x, plot.y, plot.w, plot.h);
     setText(INK);
-    y += h + 6;
+    y += h + 4;
     paragraph(
       season.knownEndOffset > season.observedEndOffset
         ? `Solid = observed through ${formatShort(season.lastObservedIso)} plus forecast through ${formatShort(season.lastKnownIso)}. Dashed = projected.`
         : "Dashed = projected.",
-      { size: 7, gap: 10 }
+      { size: 7, gap: 6 }
     );
   }
 
@@ -578,16 +592,16 @@ export function buildPdf({ jsPDF, season, hybrid, location, brand, logoDataUrl, 
       doc.line(MARGIN, y, MARGIN + CONTENT_W, y);
       y += 3;
     }
-    y += 6;
+    y += 4;
     paragraph(
-      "The three “this season” rows share identical observed and forecast data and differ only in how the rest of the year turns out. Treat the spread between them as the answer, not any single date.",
-      { size: 7 }
+      "The three “this season” rows share identical observed and forecast data and differ only in how the rest of the year turns out — treat the spread between them as the answer, not any single date.",
+      { size: 7, gap: 4 }
     );
   }
 
   function drawStageChart() {
-    const h = 360;
-    ensureSpace(h + 16);
+    const h = 380;
+    ensureSpace(h + 12);
     const plot = { x: MARGIN + 34, y, w: CONTENT_W - 40, h };
     const maxGdu = stages[stages.length - 1].gdu;
     const yMax = Math.ceil((maxGdu * 1.02) / 100) * 100;
@@ -654,7 +668,7 @@ export function buildPdf({ jsPDF, season, hybrid, location, brand, logoDataUrl, 
       });
     }
 
-    y += h + 14;
+    y += h + 10;
   }
 
   function drawFrost() {
@@ -670,7 +684,8 @@ export function buildPdf({ jsPDF, season, hybrid, location, brand, logoDataUrl, 
       [season.lightFrost && season.lightFrost.medianMonthDay ? formatShort(`${yr}-${season.lightFrost.medianMonthDay}`) : "—", "median 32 °F frost"],
     ]);
     paragraph(
-      "Read these as the LATE end of the range. Checked against real thermometer records near Missouri Valley, Iowa for 1996–2025, this gridded dataset put the median first 32 °F at Oct 26 where nearby stations measured Oct 19 and Oct 7. GDU accumulation itself checked out to within about 1% of the nearest station; it's the frost dates specifically that run late, because they hinge on one night's minimum rather than a season of averages."
+      "Read these as the LATE end of the range. Against real thermometer records near Missouri Valley, Iowa for 1996–2025, this gridded dataset put the median first 32 °F at Oct 26 where nearby stations measured Oct 19 and Oct 7 — frost hinges on one night's minimum, which a 6-to-15 mile grid cell averages away. GDU accumulation itself checked out within about 1% of the nearest station.",
+      { size: 7.2, gap: 5 }
     );
   }
 
@@ -678,9 +693,8 @@ export function buildPdf({ jsPDF, season, hybrid, location, brand, logoDataUrl, 
     const yrs = season.yearsUsed || [];
     const lines = [
       "GDU = (min(daily high, 86 °F) + max(daily low, 50 °F)) ÷ 2 − 50 — the modified base-50/86 method US seed companies rate hybrids on. A day below 50 °F counts 0, never a negative; heat above 86 °F adds nothing. Accumulation starts on the planting date itself.",
-      `Normal, hot and cool are the 50th, 90th and 10th percentiles of accumulation across ${yrs.length} complete years (${yrs[0]}–${yrs[yrs.length - 1]}) at this exact grid point — an envelope, not a replay of any one year.`,
-      `Temperatures: ERA5 reanalysis via Open-Meteo through ${formatShort(season.lastObservedIso, { withYear: true })}, plus Open-Meteo's 16-day forecast. Grid point ${location.lat.toFixed(4)}, ${location.lon.toFixed(4)}.`,
-      "Growth stages between Planting, Silks and Maturity are scaled from Iowa State's published GDU ladder for a 2,700-GDU hybrid and are estimates; the three named stages are the hybrid's own figures.",
+      `Normal, hot and cool are the 50th, 90th and 10th percentiles of accumulation across ${yrs.length} complete years (${yrs[0]}–${yrs[yrs.length - 1]}) at this exact grid point — an envelope, not a replay of any one year. Growth stages between Planting, Silks and Maturity are scaled from Iowa State's published ladder for a 2,700-GDU hybrid and are estimates.`,
+      `Temperatures: ERA5 reanalysis via Open-Meteo through ${formatShort(season.lastObservedIso, { withYear: true })}, plus its 16-day forecast. Grid point ${location.lat.toFixed(4)}, ${location.lon.toFixed(4)}.`,
     ];
     if (hybrid.anyEstimated) {
       const parts = [];
@@ -689,7 +703,7 @@ export function buildPdf({ jsPDF, season, hybrid, location, brand, logoDataUrl, 
         if (src) parts.push(`${name} ${rv.value.toLocaleString()} GDU was ${src}`);
       }
       lines.push(
-        `${parts.join("; ")}. Estimates come from a least-squares fit on all 72 hybrids in the built-in list, with error measured by leaving each hybrid out of the fit and predicting it. Relative maturity is the weakest basis — the worst hybrid in the list sits 472 GDU off its maturity's trend, about three weeks of grain fill.`
+        `${parts.join("; ")}. Estimates come from a least-squares fit on all 72 hybrids in the built-in list, with error measured by holding each hybrid out. Relative maturity is the weakest basis — the worst sits 472 GDU off its maturity's trend, about three weeks of grain fill.`
       );
     }
     lines.push("GDU is a heat model, not a crop model. It knows nothing about drought, saturated soils, replant, hail, disease or nitrogen — any of which can move real silk and black layer dates well off these numbers.");

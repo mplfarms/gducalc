@@ -1,4 +1,9 @@
-# Publishing to gdu.mplfarms.com
+# Publishing to gducalc.mplfarms.com
+
+**This is already live** at https://gducalc.mplfarms.com — Netlify project
+`gducalc`, GoDaddy CNAME `gducalc` → `gducalc.netlify.app`. The steps below are
+the record of how it got there; for routine updates skip to "Shipping an update
+later" at the bottom.
 
 Same pattern as the Corn Plot app, which today runs as its own Netlify site
 (`cornplotentry.netlify.app`) with `cornplot.mplfarms.com` pointed at it by a
@@ -21,7 +26,7 @@ Corn Plot site.** Three concrete reasons:
 
 ## 1. Make the GitHub repo
 
-1. Unzip `gdu-calculator-v1.3-repo.zip`. You'll get a folder with `public/`,
+1. Unzip the latest `gdu-calculator-vX.Y-repo.zip`. You'll get a folder with `public/`,
    `netlify.toml`, `test/`, `README.md` and this file.
 2. On github.com: **+ → New repository**. Name it `gdu-calculator`. Private is
    fine — Netlify can read private repos once you connect it. Do **not** tick
@@ -51,43 +56,43 @@ the folders rather than opening them first.
    - **Functions directory:** *(empty — this app has none)*
 3. **Deploy.** It's a static upload with no build step, so it finishes in well
    under a minute.
-4. **Site configuration → Change site name** → `mplfarms-gdu`, giving you
-   `mplfarms-gdu.netlify.app`. Open it and confirm the app loads before touching
+4. **Site configuration → Change site name** → `gducalc`, giving you
+   `gducalc.netlify.app`. Open it and confirm the app loads before touching
    DNS.
 
-## 3. Point gdu.mplfarms.com at it
+## 3. Point gducalc.mplfarms.com at it
 
-1. Netlify → **Domain management → Add a domain** → `gdu.mplfarms.com`. Netlify
+1. Netlify → **Domain management → Add a domain** → `gducalc.mplfarms.com`. Netlify
    will say the domain isn't managed by them and show you the DNS record it
    wants.
 2. At your DNS host (the same place `cornplot.mplfarms.com` is configured), add:
 
    | Type | Name | Value | TTL |
    |---|---|---|---|
-   | CNAME | `gdu` | `mplfarms-gdu.netlify.app` | default / 1 hour |
+   | CNAME | `gducalc` | `gducalc.netlify.app` | default / 1 hour |
 
    This is exactly the shape of the existing `cornplot` record — that one is a
    CNAME to `cornplotentry.netlify.app`.
 3. Wait for propagation (usually minutes, occasionally an hour), then in Netlify
    **Domain management → HTTPS → Verify DNS configuration**. Netlify issues the
    Let's Encrypt certificate automatically once the CNAME resolves. Don't skip
-   this — without the cert, browser geolocation ("Use My Location") is blocked,
-   since it requires HTTPS.
+   it — service workers only register over HTTPS, so without the cert the app
+   won't cache, won't work offline, and won't install to a home screen.
 
 ## 4. Check it works
 
-On a phone, at `https://gdu.mplfarms.com`:
+On a phone, at `https://gducalc.mplfarms.com`:
 
 - [ ] Brand View picker appears on first load; picking one themes the app
-- [ ] **Use My Location** prompts for permission and returns a location
-      *(this is the HTTPS check — it will silently fail on plain http)*
 - [ ] A ZIP lookup returns the right town
 - [ ] **Choose from Hybrid List** shows all 72 hybrids
 - [ ] Calculate returns a chart within a few seconds
+- [ ] The share button produces a PDF
 - [ ] Add to Home Screen installs it with its own icon, and it opens offline far
-      enough to show the input screen
+      enough to show the input screen *(this is the HTTPS check — the service
+      worker silently refuses to register on plain http)*
 
-## Shipping an update later
+## Shipping an update later  ← the part you need now
 
 Replace the changed files in the GitHub repo (web UI: open the file → pencil →
 paste → commit, or drag a replacement through **Add file → Upload files**).

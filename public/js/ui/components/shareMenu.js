@@ -1,31 +1,25 @@
 // src/ui/components/shareMenu.js
 //
-// The top-bar share button and the menu behind it. Same glyph, same
-// button placement (immediately left of the Settings gear) and the same
-// .share-menu-* classes as Corn Plot Harvest's own share menu, so a rep
-// who uses that app finds this one without looking.
+// The top-bar share button. Same glyph and placement (immediately left
+// of the Settings gear) as Corn Plot Harvest's, so a rep who uses that
+// app finds this one without looking.
 //
-// Three actions, and the split between them is deliberate:
+// ONE TAP, ONE OUTCOME: it builds the branded PDF report
+// (core/pdfBuilder.js) and hands it straight to the OS share sheet,
+// falling back to a download where there isn't one. There is deliberately
+// no intermediate menu — per explicit request, and because a menu whose
+// first item is what everyone wants is just a tax on getting there.
 //
-//   Share PDF      — the primary action, and the one that produces a
-//     real artifact. Builds a branded two-page report (core/pdfBuilder.js)
-//     and hands it to the OS share sheet as a file where that exists,
-//     falling back to a plain download. This replaced "open the browser's
-//     print dialog and hope": the print path produced whatever the
-//     browser felt like, with app chrome to strip and page breaks landing
-//     mid-chart, and it looked like a screenshot of an app rather than
-//     something you send a customer.
+// The plain-text summary still exists and still gets used: it rides
+// along as the share sheet's `text`, so a message app gets the headline
+// numbers in the body with the PDF attached, rather than a bare
+// attachment with no context.
 //
-//   Print          — kept as a secondary, because the print stylesheet is
-//     already there and someone with a printer in front of them
-//     shouldn't have to go through a file.
-//
-//   Copy summary   — plain text, for pasting into a message or an email
-//     body. Works everywhere, including desktop browsers with no share
-//     sheet.
+// (An earlier version offered Print and Copy Summary alongside. The
+// print stylesheet in gdu.css is still there and still correct — if
+// those are wanted back, they need a menu again, not new plumbing.)
 
-import { h, clear, debounceGuard } from "../dom.js";
-import { showCustomModal } from "./modal.js";
+import { h, debounceGuard } from "../dom.js";
 import { showToast } from "./toast.js";
 import { formatShort, todayIso } from "../../core/dates.js";
 import { buildPdf, pdfFilename } from "../../core/pdfBuilder.js";
@@ -54,7 +48,7 @@ const SHARE_ICON_SVG = `
  * device's own local storage, so a URL would open the app on the
  * recipient's phone showing THEIR last calculation, not this one — which
  * is worse than sending no link at all, because it looks like it worked.
- * The text carries the numbers; Print / Save as PDF carries the charts.
+ * The text carries the numbers; the attached PDF carries the charts.
  *
  * @param {Object} args
  * @returns {string}
@@ -101,11 +95,10 @@ export function buildSummary({ season, hybrid, location, rows }) {
 }
 
 /**
- * Builds the top-bar share button. Returns the button element, ready to
- * hand to createTopBar's `right` slot (which places it left of the gear).
- * @param {() => Object} getContext supplies the current season/hybrid/etc
- *   at click time, so the menu can't capture stale data from a render
- *   that happened before the weather finished loading.
+ * Builds the top-bar share button. One tap builds and shares the PDF.
+ * @param {() => Object|null} getContext supplies the current
+ *   season/hybrid/etc at click time, so the button can't capture stale
+ *   data from a render that happened before the weather finished loading.
  * @returns {HTMLElement}
  */
 export function createShareButton(getContext) {
@@ -114,100 +107,43 @@ export function createShareButton(getContext) {
     {
       type: "button",
       className: "top-bar-btn top-bar-btn-share",
-      "aria-label": "Share or print",
-      onclick: debounceGuard(() => openShareMenu(getContext())),
+      "aria-label": "Share PDF report",
+      onclick: debounceGuard(() => shareReport(getContext())),
     },
     h("span", { className: "top-bar-share-icon", html: SHARE_ICON_SVG })
   );
 }
 
-function openShareMenu(ctx) {
+/**
+ * Builds the PDF and gets it out of the browser. Exported so a test can
+ * drive it without synthesising a tap.
+ * @param {Object|null} ctx
+ */
+export async function shareReport(ctx) {
   if (!ctx) {
     showToast("Nothing to share yet — the results are still loading.", { type: "error" });
     return;
   }
 
-  const panel = h("div", { className: "share-menu-panel share-menu-panel-modal" });
-  const modal = showCustomModal({ title: "Share This Outlook", bodyNode: panel });
-
-  const items = [];
-
-  items.push([
-    "Share PDF",
-    "Builds a branded two-page report and opens your share sheet, or downloads it.",
-    async () => {
-      modal.close();
-      const busy = showToast("Building the PDF…", { duration: 0 });
-      try {
-        const [jsPDF, logoDataUrl] = await Promise.all([
-          loadJsPdf(),
-          // A missing logo costs a watermark, not the report.
-          ctx.brand ? getLogoDataUrl(ctx.brand).catch(() => null) : Promise.resolve(null),
-        ]);
-        const generatedOn = todayIso();
-        const blob = buildPdf({ jsPDF, ...ctx, logoDataUrl, generatedOn, appVersion: APP_VERSION });
-        busy.dismiss();
-        await shareOrDownload(blob, pdfFilename({ hybrid: ctx.hybrid, location: ctx.location, generatedOn }), "application/pdf");
-      } catch (e) {
-        busy.dismiss();
-        console.error("[share] PDF build failed", e);
-        showToast(e && e.message ? e.message : "Couldn't build the PDF.", { type: "error" });
-      }
-    },
-  ]);
-
-  items.push([
-    "Print",
-    "Opens your browser's print dialog for this screen.",
-    () => {
-      modal.close();
-      // The dialog is modal and synchronous in most browsers; letting the
-      // overlay finish tearing down first keeps it out of the printed
-      // page in the ones where it isn't.
-      setTimeout(() => window.print(), 120);
-    },
-  ]);
-
-  const summary = () => buildSummary(ctx);
-
-  items.push([
-    "Copy summary",
-    "Puts the numbers on the clipboard as plain text.",
-    async () => {
-      modal.close();
-      const text = summary();
-      try {
-        await navigator.clipboard.writeText(text);
-        showToast("Summary copied.", { type: "success", duration: 2500 });
-      } catch (e) {
-        // Clipboard API needs a secure context and a user gesture; on the
-        // browsers where it's blocked, fall back to a selectable textarea
-        // rather than telling someone their copy failed with no recourse.
-        fallbackCopy(text);
-      }
-    },
-  ]);
-
-  clear(panel);
-  for (const [label, hint, onClick] of items) {
-    panel.appendChild(
-      h("button", { type: "button", className: "share-menu-item", onclick: debounceGuard(onClick) }, [
-        h("span", { className: "share-menu-item-label" }, label),
-        h("span", { className: "share-menu-item-hint" }, hint),
-      ])
-    );
+  // Building the document takes a beat on a phone, and a tap that looks
+  // like it did nothing is worse than a slow tap that says so.
+  const busy = showToast("Building the PDF…", { duration: 0 });
+  try {
+    const [jsPDF, logoDataUrl] = await Promise.all([
+      loadJsPdf(),
+      // A missing logo costs a watermark, not the report.
+      ctx.brand ? getLogoDataUrl(ctx.brand).catch(() => null) : Promise.resolve(null),
+    ]);
+    const generatedOn = todayIso();
+    const blob = buildPdf({ jsPDF, ...ctx, logoDataUrl, generatedOn, appVersion: APP_VERSION });
+    busy.dismiss();
+    await shareOrDownload(blob, pdfFilename({ hybrid: ctx.hybrid, location: ctx.location, generatedOn }), "application/pdf", {
+      title: `GDU outlook — ${ctx.hybrid.label}`,
+      text: buildSummary(ctx),
+    });
+  } catch (e) {
+    busy.dismiss();
+    console.error("[share] PDF build failed", e);
+    showToast(e && e.message ? e.message : "Couldn't build the PDF.", { type: "error" });
   }
-}
-
-/** Last-resort copy: show the text selected so it can be copied by hand. */
-function fallbackCopy(text) {
-  const area = h("textarea", { className: "text-input text-area gdu-copy-fallback", readonly: true }, text);
-  showCustomModal({
-    title: "Copy Summary",
-    bodyNode: h("div", { className: "search-list-body" }, [h("p", { className: "field-note" }, "Your browser blocked the clipboard. Select this text and copy it."), area]),
-  });
-  setTimeout(() => {
-    area.focus();
-    area.select();
-  }, 0);
 }

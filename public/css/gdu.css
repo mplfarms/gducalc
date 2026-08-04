@@ -1005,3 +1005,34 @@
     content: "";
   }
 }
+
+/* ---------- native select, matched to .text-input ---------- */
+
+/* The shared stylesheet resets `font: inherit` on button, input and
+   textarea — but not on select, so a <select class="text-input"> fell
+   back to the browser's own control font (13.3px against 16px
+   everywhere else) and read as a different, smaller box than the fields
+   above and below it. On iOS the native control also picks its own
+   height and padding.
+
+   Fixed here rather than in styles.css because that file is a verbatim
+   copy from Corn Plot Harvest and stays that way — see the note at the
+   top of this file. */
+select.text-input {
+  font: inherit;
+  color: inherit;
+  -webkit-appearance: none;
+  appearance: none;
+  min-height: 44px;
+  /* Room for the chevron below, which replaces the native one that
+     appearance:none just removed. */
+  padding-right: 34px;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5 L6 6.5 L11 1.5' fill='none' stroke='%23808f86' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 12px 8px;
+}
+
+/* A single mid-gray chevron serves both themes — it's a decorative
+   affordance, not information, and it reads against both the light and
+   the dark field background without needing two encoded copies. */
