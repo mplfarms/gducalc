@@ -21,6 +21,7 @@ import { navigate } from "../router.js";
 import { lookupZip, requestDeviceLocation } from "../../core/location.js";
 import { openHybridPicker } from "../components/hybridPicker.js";
 import * as catalog from "../../core/hybridCatalog.js";
+import { resolve as resolveHybridInputs, sourceLabel, accuracyNote, RM_FITTED_MIN, RM_FITTED_MAX } from "../../core/hybridEstimate.js";
 import { formatShort, todayIso, yearOf } from "../../core/dates.js";
 
 export function render(container) {
@@ -199,14 +200,73 @@ export function render(container) {
     },
   });
 
+  const rmInput = numberInput("Relative maturity", state.hybrid.rm, (v) => {
+    inputStore.updateHybrid({ rm: v });
+    paintCatalogNote();
+    paintResolved();
+  }, "e.g. 105");
   const silkInput = numberInput("GDUs to silk", state.hybrid.gduToSilk, (v) => {
     inputStore.updateHybrid({ gduToSilk: v });
     paintCatalogNote();
-  }, "1250");
+    paintResolved();
+  }, "optional");
   const blInput = numberInput("GDUs to black layer", state.hybrid.gduToBlackLayer, (v) => {
     inputStore.updateHybrid({ gduToBlackLayer: v });
     paintCatalogNote();
-  }, "2650");
+    paintResolved();
+  }, "optional");
+
+  // ---- what will actually be calculated with ----
+  // Shown live under the inputs. Any ONE of RM / silk / black layer is
+  // enough; the rest gets estimated (core/hybridEstimate.js) and is
+  // labeled as an estimate here rather than being written into the input
+  // boxes, which would make a guess look like something someone typed.
+  const resolvedNote = h("div", { className: "gdu-resolved-note" });
+
+  function paintResolved() {
+    const hy = inputStore.getState().hybrid;
+    resolvedNote.textContent = "";
+    const r = resolveHybridInputs({ gduToSilk: hy.gduToSilk, gduToBlackLayer: hy.gduToBlackLayer, rm: hy.rm });
+
+    if (!r.ok) {
+      resolvedNote.appendChild(h("p", { className: "gdu-resolved-empty" }, r.error));
+      return;
+    }
+
+    const rows = [
+      ["Silk", r.silk],
+      ["Black layer", r.blackLayer],
+    ].map(([label, rv]) => {
+      const src = sourceLabel(rv, r.rm);
+      return h("div", { className: "gdu-resolved-row" }, [
+        h("span", { className: "gdu-resolved-label" }, label),
+        h("span", { className: "gdu-resolved-value" }, `${rv.value.toLocaleString()} GDU`),
+        src
+          ? h("span", { className: "field-locked-tag gdu-tag-estimated" }, "est.")
+          : h("span", { className: "gdu-resolved-src" }, "entered"),
+        src ? h("span", { className: "gdu-resolved-src" }, src) : null,
+      ]);
+    });
+
+    resolvedNote.appendChild(h("h4", { className: "gdu-subheading gdu-subheading-tight" }, "Will calculate with"));
+    resolvedNote.appendChild(h("div", { className: "gdu-resolved-table" }, rows));
+
+    const notes = [];
+    for (const rv of [r.silk, r.blackLayer]) {
+      const acc = accuracyNote(rv);
+      if (acc && !notes.includes(acc)) notes.push(acc);
+    }
+    if (notes.length) {
+      resolvedNote.appendChild(
+        h("p", { className: "gdu-resolved-accuracy" }, `Estimated values are ${notes.join("; ")}. Checked by leaving each of the 72 listed hybrids out of the fit in turn and predicting it — real out-of-sample error, not the fit's own memory.`)
+      );
+    }
+    if (r.rmOutsideFit) {
+      resolvedNote.appendChild(
+        h("p", { className: "gdu-resolved-warn" }, `The estimator was fitted on hybrids from ${RM_FITTED_MIN} to ${RM_FITTED_MAX} day. At ${r.rm} day it's extrapolating past its data — treat the result as a rough bracket and use real ratings if you can get them.`)
+      );
+    }
+  }
 
   // ---- built-in hybrid list ----
   const catalogNote = h("div", { className: "gdu-catalog-note" });
@@ -262,9 +322,11 @@ export function render(container) {
   function applyCatalogHybrid(hy) {
     inputStore.updateHybrid({ name: hy.variety, gduToSilk: hy.gduToSilk, gduToBlackLayer: hy.gduToBlackLayer, rm: hy.rm });
     nameInput.value = hy.variety;
+    rmInput.input.value = String(hy.rm);
     silkInput.input.value = String(hy.gduToSilk);
     blInput.input.value = String(hy.gduToBlackLayer);
     paintCatalogNote();
+    paintResolved();
   }
 
   const pickBtn = h(
@@ -321,9 +383,11 @@ export function render(container) {
                 const s = inputStore.getState().hybrid;
                 brandSelectEl.value = s.brand || "";
                 nameInput.value = s.name || "";
+                rmInput.input.value = s.rm ?? "";
                 silkInput.input.value = s.gduToSilk ?? "";
                 blInput.input.value = s.gduToBlackLayer ?? "";
                 paintCatalogNote();
+                paintResolved();
                 showToast(`Loaded ${item.name}.`, { type: "success", duration: 2500 });
               },
             },
@@ -358,6 +422,7 @@ export function render(container) {
     }
   }
   paintSavedList();
+  paintResolved();
 
   const hybridCard = h("section", { className: "card" }, [
     h("h3", { className: "section-header" }, "Hybrid"),
@@ -365,15 +430,21 @@ export function render(container) {
     h("div", { className: "gdu-or-divider" }, "or enter it yourself"),
     h("div", { className: "field" }, [h("label", { className: "field-label" }, "Brand"), brandSelectEl]),
     h("div", { className: "field" }, [h("label", { className: "field-label" }, "Hybrid"), nameInput]),
+    h("div", { className: "field" }, [
+      h("label", { className: "field-label" }, "Relative Maturity (days)"),
+      rmInput.input,
+      h("p", { className: "field-note" }, "Enough on its own — with RM and no GDU numbers, both get estimated from the 72 hybrids in the built-in list."),
+    ]),
     h("div", { className: "gdu-two-col" }, [
       h("div", { className: "field" }, [h("label", { className: "field-label" }, "GDUs to Silk"), silkInput.input]),
       h("div", { className: "field" }, [h("label", { className: "field-label" }, "GDUs to Black Layer"), blInput.input]),
     ]),
+    resolvedNote,
     catalogNote,
     h(
       "p",
       { className: "field-note" },
-      "Anything not on the built-in list can be typed in directly — use the numbers off that brand's own tech sheet. The built-in ratings are reproduced exactly as supplied and are never derived from relative maturity."
+      "Anything not on the built-in list can be typed in directly — use the numbers off that brand's own tech sheet where you have them. A real GDU rating always beats an estimate, and one real rating beats RM: the app estimates a missing black layer from a known silk before it will fall back to maturity."
     ),
     h(
       "button",

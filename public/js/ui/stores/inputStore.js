@@ -20,12 +20,15 @@
 // has been edited away from its list value — that's a display concern,
 // handled in calculator.js.
 //
-// `rm` (relative maturity) rides along for display only. Nothing in the
-// GDU engine reads it: RM and GDU measure related but different things,
-// and deriving one from the other is exactly the kind of shortcut that
-// puts a wrong number on screen wearing a confident face.
+// `rm` (relative maturity) is both a display field and, when the GDU
+// boxes are empty, the input an estimate is built from — see
+// core/hybridEstimate.js. The GDU engine itself still never reads RM:
+// everything downstream consumes the two resolved GDU numbers, and
+// whether those were typed or estimated is carried alongside as
+// provenance so every screen can label them.
 
 import { createPubSub, readJson, writeJson } from "./pubsub.js";
+import { resolve as resolveHybridInputs } from "../../core/hybridEstimate.js";
 
 const LOCATION_KEY = "gdu.location";
 const PLANTING_KEY = "gdu.plantingDate";
@@ -80,15 +83,17 @@ export function saveCurrentHybrid() {
   const h = state.hybrid || {};
   const name = String(h.name || "").trim();
   if (!name) return { ok: false, error: "Give the hybrid a name before saving it." };
-  if (!Number.isFinite(Number(h.gduToSilk)) || !Number.isFinite(Number(h.gduToBlackLayer))) {
-    return { ok: false, error: "Enter both GDU numbers before saving." };
-  }
+  // Saving stores exactly what was typed, estimates included as blanks —
+  // re-resolving on load means a saved RM-only hybrid picks up any later
+  // change to the estimator instead of freezing today's guess.
+  const check = resolveHybridInputs({ gduToSilk: h.gduToSilk, gduToBlackLayer: h.gduToBlackLayer, rm: h.rm });
+  if (!check.ok) return { ok: false, error: check.error };
   const entry = {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     brand: String(h.brand || "").trim(),
     name,
-    gduToSilk: Number(h.gduToSilk),
-    gduToBlackLayer: Number(h.gduToBlackLayer),
+    gduToSilk: Number.isFinite(Number(h.gduToSilk)) ? Number(h.gduToSilk) : null,
+    gduToBlackLayer: Number.isFinite(Number(h.gduToBlackLayer)) ? Number(h.gduToBlackLayer) : null,
     rm: Number.isFinite(Number(h.rm)) ? Number(h.rm) : null,
   };
   const key = (x) => `${String(x.brand || "").trim().toLowerCase()}|${String(x.name || "").trim().toLowerCase()}`;
@@ -121,19 +126,34 @@ export function loadSavedHybrid(id) {
 }
 
 /**
- * @returns {{ok: true, value: {gduToSilk: number, gduToBlackLayer: number, label: string, rm: number|null}} | {ok: false, error: string}}
+ * Resolves the current hybrid into the pair of GDU numbers to calculate
+ * with, filling in whichever is missing from the other or from RM (see
+ * core/hybridEstimate.js). Any one of the three inputs is enough.
+ *
+ * The returned value carries provenance for both numbers, so the input
+ * card, the results header and the method card can all label an
+ * estimate as an estimate rather than letting it pass as a reading off
+ * a tech sheet.
+ *
+ * @returns {{ok: true, value: {gduToSilk: number, gduToBlackLayer: number, label: string, rm: number|null, silk: Object, blackLayer: Object, anyEstimated: boolean, rmOutsideFit: boolean}} | {ok: false, error: string}}
  */
 export function validatedHybrid() {
   const h = state.hybrid || {};
-  const silk = Number(h.gduToSilk);
-  const bl = Number(h.gduToBlackLayer);
-  if (!Number.isFinite(silk) || silk <= 0) return { ok: false, error: "Enter the hybrid's GDUs to silk." };
-  if (!Number.isFinite(bl) || bl <= 0) return { ok: false, error: "Enter the hybrid's GDUs to black layer." };
-  // Silk always precedes black layer; a reversed pair is a data-entry
-  // slip that would otherwise produce a silently nonsensical chart
-  // (a "silk" line above the "black layer" line).
-  if (silk >= bl) return { ok: false, error: "GDUs to silk must be lower than GDUs to black layer — check the two numbers." };
+  const resolved = resolveHybridInputs({ gduToSilk: h.gduToSilk, gduToBlackLayer: h.gduToBlackLayer, rm: h.rm });
+  if (!resolved.ok) return resolved;
+
   const label = [String(h.brand || "").trim(), String(h.name || "").trim()].filter(Boolean).join(" ") || "This hybrid";
-  const rm = Number.isFinite(Number(h.rm)) ? Number(h.rm) : null;
-  return { ok: true, value: { gduToSilk: silk, gduToBlackLayer: bl, label, rm } };
+  return {
+    ok: true,
+    value: {
+      gduToSilk: resolved.silk.value,
+      gduToBlackLayer: resolved.blackLayer.value,
+      label,
+      rm: resolved.rm,
+      silk: resolved.silk,
+      blackLayer: resolved.blackLayer,
+      anyEstimated: resolved.anyEstimated,
+      rmOutsideFit: resolved.rmOutsideFit,
+    },
+  };
 }

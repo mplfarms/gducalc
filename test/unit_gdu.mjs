@@ -11,6 +11,7 @@ import { dailyGdu, percentile, accumulate, envelopeFromCalendarDate, offsetAtTar
 import { addDays, daysBetween, isoForYear, isoToUtcMs, utcMsToIso, monthDayOf, formatShort } from "../public/js/core/dates.js";
 import { buildSeason, baselineYearsFor, SEASON_DAYS } from "../public/js/core/season.js";
 import { STAGE_LADDER, stagesForHybrid, datedStages, REFERENCE_SILK, REFERENCE_BLACK_LAYER } from "../public/js/core/stages.js";
+import { resolve as resolveHybrid, MODELS, RM_FITTED_MIN, RM_FITTED_MAX } from "../public/js/core/hybridEstimate.js";
 
 let passed = 0;
 function test(name, fn) {
@@ -611,6 +612,139 @@ test("a stage the curve never reaches gets no date rather than a guess", () => {
   const dated = datedStages(stages, [10, 20, 30], "2026-05-01", 2, { offsetAtTarget, addDays });
   assert.equal(dated.find((x) => x.key === "maturity").iso, null);
   assert.equal(dated.find((x) => x.key === "planting").iso, "2026-05-01");
+});
+
+// ---------------------------------------------------------------
+console.log("\nhybridEstimate.js");
+// ---------------------------------------------------------------
+
+test("both numbers entered are passed through untouched", () => {
+  const r = resolveHybrid({ gduToSilk: 1290, gduToBlackLayer: 2620 });
+  assert.equal(r.ok, true);
+  assert.equal(r.silk.value, 1290);
+  assert.equal(r.blackLayer.value, 2620);
+  assert.equal(r.silk.source, "entered");
+  assert.equal(r.blackLayer.source, "entered");
+  assert.equal(r.anyEstimated, false);
+});
+
+test("silk alone estimates black layer, and vice versa", () => {
+  const a = resolveHybrid({ gduToSilk: 1290 });
+  assert.equal(a.ok, true);
+  assert.equal(a.silk.source, "entered");
+  assert.equal(a.blackLayer.source, "fromSilk");
+  assert.equal(a.blackLayer.value, Math.round(MODELS.blFromSilk.slope * 1290 + MODELS.blFromSilk.intercept));
+
+  const b = resolveHybrid({ gduToBlackLayer: 2620 });
+  assert.equal(b.ok, true);
+  assert.equal(b.blackLayer.source, "entered");
+  assert.equal(b.silk.source, "fromBlackLayer");
+  assert.equal(b.silk.value, Math.round(MODELS.silkFromBl.slope * 2620 + MODELS.silkFromBl.intercept));
+});
+
+test("RM alone estimates both", () => {
+  const r = resolveHybrid({ rm: 105 });
+  assert.equal(r.ok, true);
+  assert.equal(r.silk.source, "fromRm");
+  assert.equal(r.blackLayer.source, "fromRm");
+  assert.equal(r.anyEstimated, true);
+  assert.equal(r.rm, 105);
+});
+
+test("a real GDU number always outranks RM as the basis", () => {
+  // This is the core rule: a paired GDU rating is specific to THIS
+  // hybrid, RM only places it in a maturity band. Leave-one-out error
+  // backs it up (40 vs 45 GDU for black layer, 19 vs 24 for silk).
+  const withBoth = resolveHybrid({ gduToSilk: 1290, rm: 105 });
+  assert.equal(withBoth.blackLayer.source, "fromSilk", "should prefer silk over RM");
+  const withBl = resolveHybrid({ gduToBlackLayer: 2620, rm: 105 });
+  assert.equal(withBl.silk.source, "fromBlackLayer", "should prefer black layer over RM");
+});
+
+test("nothing at all is rejected with an actionable message", () => {
+  const r = resolveHybrid({});
+  assert.equal(r.ok, false);
+  assert.match(r.error, /any one of the three/i);
+});
+
+test("an entered pair in the wrong order is still rejected", () => {
+  // Both values in range, but reversed — so this exercises the ordering
+  // guard rather than the range guard (2,900 silk would trip the range
+  // check first and never reach it).
+  const r = resolveHybrid({ gduToSilk: 2100, gduToBlackLayer: 1500 });
+  assert.equal(r.ok, false);
+  assert.match(r.error, /lower than/i);
+});
+
+test("out-of-range inputs are called out as typos, not silently estimated from", () => {
+  assert.equal(resolveHybrid({ gduToSilk: 50 }).ok, false);
+  assert.equal(resolveHybrid({ gduToBlackLayer: 99999 }).ok, false);
+  assert.equal(resolveHybrid({ rm: 5 }).ok, false);
+  assert.equal(resolveHybrid({ rm: 400 }).ok, false);
+});
+
+test("estimates always keep silk below black layer across the whole valid range", () => {
+  for (let rm = 60; rm <= 135; rm++) {
+    const r = resolveHybrid({ rm });
+    assert.equal(r.ok, true, `RM ${rm} rejected`);
+    assert.ok(r.silk.value < r.blackLayer.value, `RM ${rm}: silk ${r.silk.value} >= BL ${r.blackLayer.value}`);
+  }
+  for (let silk = 400; silk <= 2200; silk += 25) {
+    const r = resolveHybrid({ gduToSilk: silk });
+    assert.ok(r.ok && r.silk.value < r.blackLayer.value, `silk ${silk} produced a bad pair`);
+  }
+  for (let bl = 900; bl <= 4000; bl += 50) {
+    const r = resolveHybrid({ gduToBlackLayer: bl });
+    assert.ok(r.ok && r.silk.value < r.blackLayer.value, `BL ${bl} produced a bad pair`);
+  }
+});
+
+test("extrapolation past the fitted RM range is flagged", () => {
+  assert.equal(resolveHybrid({ rm: 105 }).rmOutsideFit, false);
+  assert.equal(resolveHybrid({ rm: RM_FITTED_MIN }).rmOutsideFit, false);
+  assert.equal(resolveHybrid({ rm: RM_FITTED_MAX }).rmOutsideFit, false);
+  assert.equal(resolveHybrid({ rm: RM_FITTED_MIN - 1 }).rmOutsideFit, true);
+  assert.equal(resolveHybrid({ rm: RM_FITTED_MAX + 1 }).rmOutsideFit, true);
+});
+
+test("the shipped models reproduce the quoted accuracy on the real catalog", () => {
+  // Guards against a coefficient being edited to something plausible but
+  // wrong. Each model is scored against all 72 hybrids; the median error
+  // must land at or under what the app tells users it is.
+  const median = (a) => { const s = [...a].sort((x, y) => x - y); const m = Math.floor(s.length / 2); return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+  const cases = [
+    ["silkFromRm", (h) => resolveHybrid({ rm: h.rm }).silk.value, (h) => h.s],
+    ["blFromRm", (h) => resolveHybrid({ rm: h.rm }).blackLayer.value, (h) => h.b],
+    ["blFromSilk", (h) => resolveHybrid({ gduToSilk: h.s }).blackLayer.value, (h) => h.b],
+    ["silkFromBl", (h) => resolveHybrid({ gduToBlackLayer: h.b }).silk.value, (h) => h.s],
+  ];
+  for (const [key, predict, actual] of cases) {
+    const errs = catalogDoc.hybrids.map((h) => Math.abs(predict(h) - actual(h)));
+    const med = median(errs);
+    // In-sample median must not EXCEED the quoted leave-one-out median —
+    // if it does, either the coefficients or the quoted figure is wrong.
+    assert.ok(med <= MODELS[key].medianErr, `${key}: in-sample median ${med} > quoted ${MODELS[key].medianErr}`);
+  }
+});
+
+test("every catalog hybrid can be recovered from its RM alone within a sane bound", () => {
+  // Not a precision claim — a guard that the fit is not wildly off for
+  // any real hybrid, which would mean a broken coefficient.
+  for (const hy of catalogDoc.hybrids) {
+    const r = resolveHybrid({ rm: hy.rm });
+    assert.ok(Math.abs(r.silk.value - hy.s) <= MODELS.silkFromRm.maxErr, `${hy.v} silk off by ${Math.abs(r.silk.value - hy.s)}`);
+    assert.ok(Math.abs(r.blackLayer.value - hy.b) <= MODELS.blFromRm.maxErr, `${hy.v} BL off by ${Math.abs(r.blackLayer.value - hy.b)}`);
+  }
+});
+
+test("an RM-only hybrid still produces a complete, ordered stage ladder", () => {
+  const r = resolveHybrid({ rm: 100 });
+  const stages = stagesForHybrid(r.silk.value, r.blackLayer.value);
+  for (let i = 1; i < stages.length; i++) {
+    assert.ok(stages[i].gdu > stages[i - 1].gdu, `ladder broke at ${stages[i].key}`);
+  }
+  assert.equal(stages.find((x) => x.key === "silk").gdu, r.silk.value);
+  assert.equal(stages.find((x) => x.key === "maturity").gdu, r.blackLayer.value);
 });
 
 console.log(`\n${passed} assertions passed.\n`);

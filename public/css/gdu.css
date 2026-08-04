@@ -712,3 +712,107 @@
   padding-left: 9px;
   font-weight: 700;
 }
+
+/* ---------- resolved / estimated hybrid ratings ---------- */
+
+/* Live readout of the two GDU numbers a calculation will actually use.
+   Estimated values are shown HERE rather than written into the input
+   boxes: filling a box with a guess makes it indistinguishable from
+   something the user typed off a tech sheet, and that difference is the
+   whole point. */
+.gdu-resolved-note {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+
+.gdu-subheading-tight {
+  margin: 0 0 8px;
+}
+
+.gdu-resolved-table {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.gdu-resolved-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  font-size: 0.86rem;
+}
+
+.gdu-resolved-label {
+  min-width: 84px;
+  color: var(--text-muted);
+}
+
+.gdu-resolved-value {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.gdu-resolved-src {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+/* Warning-colored, not danger: an estimate is usable, just weaker than a
+   tech-sheet number. Same treatment wherever an estimated value appears. */
+.gdu-tag-estimated {
+  color: var(--highlight);
+  border-color: var(--highlight);
+  background: transparent;
+}
+
+.gdu-resolved-empty {
+  margin: 0;
+  font-size: 0.86rem;
+  color: var(--text-muted);
+}
+
+.gdu-resolved-accuracy {
+  margin: 10px 0 0;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.gdu-resolved-warn {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--highlight);
+  border-radius: 6px;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: var(--text);
+}
+
+/* Results screen */
+
+.gdu-rating-src {
+  display: block;
+  font-size: 0.74rem;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.gdu-estimate-banner {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border-left: 4px solid var(--highlight);
+  border-radius: 8px;
+  background: var(--bg);
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
+.gdu-method-estimate {
+  border-left: 3px solid var(--highlight);
+  padding-left: 10px;
+  margin-left: -10px;
+}

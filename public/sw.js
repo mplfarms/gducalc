@@ -13,7 +13,7 @@
 // at the end of the calendar day it was fetched), is surfaced in the UI
 // ("cached earlier today"), and can be cleared from Settings.
 
-const CACHE_VERSION = "v1.3-beta";
+const CACHE_VERSION = "v1.4-beta";
 const CACHE_NAME = `gdu-calculator-${CACHE_VERSION}`;
 
 // Enumerated app shell — the Cache API has no wildcard support, so this
@@ -38,6 +38,7 @@ const PRECACHE_URLS = [
   "/js/core/location.js",
   "/js/core/hybridCatalog.js",
   "/js/core/stages.js",
+  "/js/core/hybridEstimate.js",
 
   "/js/ui/brand.js",
   "/js/ui/chart.js",

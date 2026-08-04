@@ -26,6 +26,7 @@ import { buildSeason, baselineYearsFor, BASELINE_YEARS } from "../../core/season
 import { addDays, daysBetween, formatShort, yearOf } from "../../core/dates.js";
 import { renderGduChart, buildChartLegend } from "../chart.js";
 import { renderStageChart, currentStage } from "../stageChart.js";
+import { sourceLabel, accuracyNote } from "../../core/hybridEstimate.js";
 import { stagesForHybrid, datedStages } from "../../core/stages.js";
 
 // Both charts render into containers they have to measure, so each hands
@@ -103,9 +104,32 @@ function headerCard(state, hybrid) {
           h("span", { className: "plot-details-summary-value" }, `${hybrid.rm} day`),
         ])
       : null,
-    h("div", { className: "plot-details-summary-row" }, [
-      h("span", { className: "plot-details-summary-label" }, "Hybrid rating"),
-      h("span", { className: "plot-details-summary-value" }, `${hybrid.gduToSilk.toLocaleString()} to silk · ${hybrid.gduToBlackLayer.toLocaleString()} to black layer`),
+    ratingRow("GDUs to silk", hybrid.silk, hybrid.rm),
+    ratingRow("GDUs to black layer", hybrid.blackLayer, hybrid.rm),
+    hybrid.anyEstimated
+      ? h(
+          "p",
+          { className: "gdu-estimate-banner" },
+          "Some of this hybrid's ratings were estimated, not read off a tech sheet — every date below inherits that. See “How these numbers were made” at the bottom for how far off an estimate typically runs."
+        )
+      : null,
+  ]);
+}
+
+/**
+ * One rating line, marked when the value was estimated rather than
+ * entered. An estimate that looks identical to a measured number on the
+ * screen people screenshot and forward is the whole problem, so the tag
+ * travels with the value.
+ */
+function ratingRow(label, rv, rm) {
+  const src = rv ? sourceLabel(rv, rm) : null;
+  return h("div", { className: "plot-details-summary-row" }, [
+    h("span", { className: "plot-details-summary-label" }, label),
+    h("span", { className: "plot-details-summary-value" }, [
+      h("span", {}, `${(rv ? rv.value : 0).toLocaleString()}`),
+      src ? h("span", { className: "field-locked-tag gdu-tag-estimated" }, "est.") : null,
+      src ? h("span", { className: "gdu-rating-src" }, src) : null,
     ]),
   ]);
 }
@@ -159,7 +183,7 @@ async function loadAndPaint(container, body, state, hybrid) {
   cards.push(tableCard(season, hybrid));
   cards.push(stageSection(season, hybrid));
   cards.push(frostCard(season, hybrid));
-  cards.push(methodCard(season, res, state));
+  cards.push(methodCard(season, res, state, hybrid));
 
   replaceTail(body, cards);
 }
@@ -548,7 +572,7 @@ function dataCard(season, hybrid) {
 // ---------------------------------------------------------------
 // Method
 // ---------------------------------------------------------------
-function methodCard(season, res, state) {
+function methodCard(season, res, state, hybrid) {
   const yrs = season.yearsUsed;
   const yearRange = yrs.length ? `${yrs[0]}–${yrs[yrs.length - 1]}` : "—";
   return h("section", { className: "card" }, [
@@ -560,6 +584,19 @@ function methodCard(season, res, state) {
       h("li", {}, "The three “this season” rows share identical observed and forecast data and differ only in how the remaining days are assumed to go."),
       h("li", {}, `Temperatures: ERA5 reanalysis via Open-Meteo for history and the current season through ${formatShort(season.lastObservedIso, { withYear: true })}, plus Open-Meteo's 16-day forecast through ${formatShort(season.lastKnownIso)}.`),
       h("li", {}, `Grid point: ${state.location.lat.toFixed(4)}, ${state.location.lon.toFixed(4)}.`),
+      hybrid.anyEstimated
+        ? h("li", { className: "gdu-method-estimate" }, [
+            h("strong", {}, "This hybrid's ratings are partly estimated. "),
+            [hybrid.silk, hybrid.blackLayer]
+              .map((rv) => {
+                const src = sourceLabel(rv, hybrid.rm);
+                return src ? `${rv === hybrid.silk ? "Silk" : "Black layer"} ${rv.value.toLocaleString()} GDU was ${src}, ${accuracyNote(rv)}.` : null;
+              })
+              .filter(Boolean)
+              .join(" ") +
+              " Those figures come from an ordinary least-squares fit on all 72 hybrids in the built-in list, with error measured by leaving each hybrid out of the fit and predicting it — so it's out-of-sample error, not the fit describing itself. RM is the weakest basis: it explains 83% of the variation in black layer, and the worst hybrid in the list sits 472 GDU off its maturity's trend, which is about three weeks of grain fill. Use the real ratings when you can get them.",
+          ])
+        : null,
       res.forecastError ? h("li", { className: "gdu-method-warn" }, `The 16-day forecast failed to load (${res.forecastError}), so the projection starts from the last observed day instead.`) : null,
     ]),
     h(

@@ -251,13 +251,82 @@ async function main() {
 
   if (SHOTS) await page.screenshot({ path: path.join(SHOT_DIR, "02-calculator.png"), fullPage: true });
 
-  // ---- validation guard --------------------------------------------
-  await page.fill('input[aria-label="GDUs to silk"]', "2900");
+  // ---- validation guards --------------------------------------------
+  // Reversed pair, both values individually plausible.
+  await page.fill('input[aria-label="GDUs to black layer"]', "1500");
+  await page.fill('input[aria-label="GDUs to silk"]', "2100");
   await page.getByRole("button", { name: "Calculate GDUs" }).click();
   await page.waitForSelector(".toast-error");
   const toastText = await page.locator(".toast-message").first().textContent();
   check("a silk rating above black layer is rejected", () => assert.match(toastText, /lower than/i));
+
+  // A value that is not a hybrid rating at all is called out as a typo.
+  await page.fill('input[aria-label="GDUs to silk"]', "50");
+  await page.getByRole("button", { name: "Calculate GDUs" }).click();
+  await page.waitForSelector(".toast-error");
+  const rangeToast = await page.locator(".toast-message").first().textContent();
+  check("an out-of-range rating is flagged as a typo", () => assert.match(rangeToast, /outside anything real/i));
+
+  // ---- partial input: one GDU number, and RM only --------------------
   await page.fill('input[aria-label="GDUs to silk"]', "1290");
+  await page.fill('input[aria-label="GDUs to black layer"]', "");
+  await page.waitForFunction(() => document.querySelector(".gdu-tag-estimated") !== null);
+  let resolvedText = await page.locator(".gdu-resolved-note").textContent();
+  check("black layer is estimated from an entered silk rating", () => {
+    assert.match(resolvedText, /estimated from GDUs to silk/);
+    assert.match(resolvedText, /2,572 GDU/); // 2.3868*1290 - 507.45 = 2572
+  });
+
+  await page.fill('input[aria-label="GDUs to silk"]', "");
+  await page.fill('input[aria-label="GDUs to black layer"]', "2620");
+  await page.waitForTimeout(100);
+  resolvedText = await page.locator(".gdu-resolved-note").textContent();
+  check("silk is estimated from an entered black layer rating", () => {
+    assert.match(resolvedText, /estimated from GDUs to black layer/);
+    assert.match(resolvedText, /1,305 GDU/); // 0.3769*2620 + 317.65 = 1305.13 -> 1305
+  });
+
+  await page.fill('input[aria-label="GDUs to black layer"]', "");
+  await page.fill('input[aria-label="Relative maturity"]', "105");
+  await page.waitForTimeout(100);
+  resolvedText = await page.locator(".gdu-resolved-note").textContent();
+  check("both are estimated from RM alone", () => {
+    assert.match(resolvedText, /estimated from 105 day RM/);
+    assert.match(resolvedText, /1,285 GDU/); // 7.5526*105 + 492.2  = 1285.2
+    assert.match(resolvedText, /2,568 GDU/); // 20.2059*105 + 445.9 = 2567.5
+  });
+  const estTags = await page.locator(".gdu-tag-estimated").count();
+  check("both estimated values carry an est. tag", () => assert.equal(estTags, 2));
+
+  // An RM outside the fitted 77-118 band must say it is extrapolating.
+  await page.fill('input[aria-label="Relative maturity"]', "130");
+  await page.waitForSelector(".gdu-resolved-warn");
+  const warnText = await page.locator(".gdu-resolved-warn").textContent();
+  check("extrapolating past the fitted RM range is warned about", () => assert.match(warnText, /extrapolating/i));
+
+  // An RM-only hybrid must actually calculate.
+  await page.fill('input[aria-label="Relative maturity"]', "105");
+  await page.waitForTimeout(100);
+  await page.getByRole("button", { name: "Calculate GDUs" }).click();
+  await page.waitForSelector(".gdu-table", { timeout: 20000 });
+  const bannerCount = await page.locator(".gdu-estimate-banner").count();
+  check("an RM-only calculation runs and says its ratings were estimated", () => assert.equal(bannerCount, 1));
+  const methodEstimate = await page.locator(".gdu-method-estimate").textContent();
+  check("the method card explains the estimate and its error", () => {
+    assert.match(methodEstimate, /estimated from 105 day RM/);
+    assert.match(methodEstimate, /out-of-sample/);
+  });
+  if (SHOTS) await page.screenshot({ path: path.join(SHOT_DIR, "10-rm-only.png"), fullPage: true });
+
+  // Back to the full, unambiguous hybrid for the remaining checks — RM
+  // included, since the RM-only section above left 105 in the box and
+  // the header legitimately reports whatever RM is currently set.
+  await page.getByRole("button", { name: "Back to inputs" }).click();
+  await page.waitForSelector(".gdu-pick-hybrid-btn");
+  await page.fill('input[aria-label="Relative maturity"]', "109");
+  await page.fill('input[aria-label="GDUs to silk"]', "1290");
+  await page.fill('input[aria-label="GDUs to black layer"]', "2620");
+  await page.waitForTimeout(100);
 
   // ---- results -----------------------------------------------------
   await page.getByRole("button", { name: "Calculate GDUs" }).click();

@@ -1,7 +1,8 @@
-# GDU Calculator v1.3 (Beta)
+# GDU Calculator v1.4 (Beta)
 
 A hybrid GDU calculator for corn: set a field location, a planting date, and a
-hybrid (72 built in, or type your own numbers), and get predicted stage dates for
+hybrid (72 built in, or type your own numbers — any one of GDUs to silk, GDUs to
+black layer, or a relative maturity is enough), and get predicted stage dates for
 this season plus last year, a normal year, an abnormally hot year, and an
 abnormally cool year — with a frost-risk check on the end.
 
@@ -50,10 +51,10 @@ npm test                  # unit + end-to-end
 npm run shots             # e2e plus screenshots into test/shots/
 ```
 
-* `test/unit_gdu.mjs` — 50 checks on the GDU math, the shipped hybrid catalog and
-  the stage ladder, all hand-worked from the formulas rather than snapshotted
-  from a previous run.
-* `test/e2e_smoke.mjs` — 38 checks driving the real UI in headless Chromium with
+* `test/unit_gdu.mjs` — 62 checks on the GDU math, the shipped hybrid catalog, the
+  stage ladder and the rating estimator, all hand-worked from the formulas rather
+  than snapshotted from a previous run.
+* `test/e2e_smoke.mjs` — 46 checks driving the real UI in headless Chromium with
   every weather/geocode call intercepted and served deterministic synthetic data.
 
 ## How it works
@@ -112,6 +113,48 @@ is generic (`rmOutlierNote` in `core/hybridCatalog.js`) and fires for anything
 more than 250 GDU off the median of hybrids within ±2 RM days.
 
 Variety names display verbatim, with no Brand View prefix applied.
+
+## Partial inputs and the rating estimator
+
+Any **one** of GDUs to silk, GDUs to black layer, or relative maturity is enough
+to calculate. Whatever is missing is filled in by ordinary least squares fitted on
+all 72 hybrids in the built-in list, exactly as supplied — nothing trimmed to
+flatter the fit, 89-58 included.
+
+Errors below are **leave-one-out**: each hybrid was predicted by a model fitted on
+the other 71 and never on itself. In-sample error reads about 10% lower and would
+be measuring the fit's memory rather than its accuracy.
+
+| Estimate | median err | p90 | worst |
+|---|---|---|---|
+| silk from black layer | 19 GDU | 53 | 102 |
+| black layer from silk | 40 GDU | 140 | 276 |
+| silk from RM | 24 GDU | 67 | 248 |
+| black layer from RM | 45 GDU | 150 | 472 |
+
+**A real GDU number always outranks RM as the basis**, and the table is why: a
+paired GDU rating is specific to that hybrid, while RM only locates it in a
+maturity band holding a 200-plus GDU spread. So a missing black layer is derived
+from a known silk before the app will fall back to maturity. `resolve()` in
+`core/hybridEstimate.js` enforces the precedence and a unit test pins it.
+
+**RM is the weakest input.** R² is 0.83 for black layer and the worst hybrid in
+the list — 42W96 TRERIB, rated 2,849 where the RM-96 trend says 2,378 — is 471 GDU
+off, roughly three weeks of grain fill. It's a reasonable default when the tech
+sheet isn't at hand; it is not a substitute for it.
+
+A quadratic in RM was tested and rejected: it moved black-layer RMSE from 88.4 to
+87.7 GDU, which is noise, and it bends badly outside the fitted range. The fit
+covers RM 77–118 (the list's own span); outside that the app still calculates but
+says on screen that it is extrapolating.
+
+Estimated values are **never written into the input boxes** — a guess sitting in a
+field looks identical to something read off a tech sheet, and that difference is
+the whole point. They appear in a "Will calculate with" panel below the inputs,
+carry an amber `est.` tag with their provenance, and are re-labeled on the results
+header and in the method card. Out-of-range entries (silk outside 400–2,200, black
+layer outside 900–4,000, RM outside 60–135) are rejected as typos rather than
+quietly estimated from.
 
 ## The growth-stage ladder
 
