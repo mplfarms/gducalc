@@ -1,4 +1,4 @@
-# GDU Calculator v2.9 (Beta)
+# GDU Calculator v3.0 (Beta)
 
 A hybrid GDU calculator for corn: set a field location, a planting date, and a
 hybrid (133 built in, or type your own numbers — any one of GDUs to silk, GDUs to
@@ -6,15 +6,34 @@ black layer, or a relative maturity is enough), and get predicted stage dates fo
 this season plus last year, a normal year, an abnormally hot year, and an
 abnormally cool year — with a frost-risk check on the end.
 
-**The hybrid is optional.** The Hybrid card arrives collapsed when empty — its
-show/hide control sits *inside* the header bar rather than beside it, so the bar
-keeps the edge-to-edge bleed every other card header has (wrapping the `<h3>` in
-a flex row made it a flex item, and the green stopped partway across the card).
-Three e2e checks pin the bar's width, its height against the Planting Date card
-above it, and the toggle's 44px tap target. A **Clear Hybrid** button empties
-every box and folds it shut again — leaving the
-field and the planting date untouched, because dropping the hybrid is not
-starting over. A ZIP code and a planting date alone produce the
+**The hybrid is optional, and the Hybrid card says so with a segmented
+toggle** — `Enter Hybrid` / `GDU Only`, exactly one always selected. Two plain
+buttons said "here are two things you can do"; a segmented control says "this is
+one choice with two answers", which is the truth.
+
+* **Enter Hybrid** expands the detail fields and drops the caret in the hybrid
+  box.
+* **GDU Only** clears the hybrid, folds the detail shut, *and runs the
+  calculation*. It is a decision rather than a setting, so it acts. It still
+  refuses when the two things a run actually needs — a location and a planting
+  date — are missing, rather than bouncing the user to a screen that can only
+  say the same thing less clearly.
+
+The separate show/hide chevron that used to sit in the header bar is gone: the
+mode toggle is the expander now, and two controls for one piece of state is how
+they end up disagreeing.
+
+**The built-in list is an inline combobox on the Hybrid field**, not a modal.
+Focus the box and all 133 drop down in a scrollable list; type and it filters;
+arrow keys highlight and Enter takes it. Rows carry the Brand View's code and
+both GDU numbers, because picking a hybrid here is really picking a pair of
+numbers. Anything not on the list is still typed straight in — same box, no
+mode switch. `components/hybridPicker.js` was deleted outright rather than left
+around unused.
+
+Switching to GDU Only leaves the field, the planting date and the saved list
+untouched — dropping the hybrid is not starting over. A ZIP code and a planting
+date alone produce the
 accumulation chart, the percentile band and the frost dates — the heat itself,
 with no stage predictions attached. Sections that need a silk or black-layer
 rating (Predicted Stage Dates, Growth Stages, Data) are omitted rather than
@@ -149,10 +168,10 @@ npm test                  # unit + end-to-end
 npm run shots             # e2e plus screenshots into test/shots/
 ```
 
-* `test/unit_gdu.mjs` — 89 checks on the GDU math, the shipped hybrid catalog, the
+* `test/unit_gdu.mjs` — 92 checks on the GDU math, the shipped hybrid catalog, the
   stage ladder and the rating estimator, all hand-worked from the formulas rather
   than snapshotted from a previous run.
-* `test/e2e_smoke.mjs` — 115 checks driving the real UI in headless Chromium with
+* `test/e2e_smoke.mjs` — 123 checks driving the real UI in headless Chromium with
   every weather/geocode call intercepted and served deterministic synthetic data.
 
 ## How it works
@@ -260,8 +279,9 @@ limits, drawn on this season's line:
   nothing to development, so the curve is flatter than the thermometer suggests
   and the plant spent that heat on stress instead. This is the visual answer to
   "it was blistering all week, why didn't we gain more GDUs".
-* **Blue** — the low fell to **50 °F or below**, so that half of the day counted
-  zero. The day still earns whatever its daytime half was worth.
+* **Blue** — the high **never got above 50 °F**, so the day never reached the
+  base and earned no GDUs at all. Rare by design: this marks days the crop did
+  not develop, not merely days with a cold night.
 
 Drawn as **thin full-height vertical rules**, 1 px and 40% opacity, underneath
 the percentile band and every curve. Two notes on that:
@@ -273,6 +293,13 @@ the percentile band and every curve. Two notes on that:
   (a red "This season" reads as the orange "Abnormally Hot" curve, the exact
   failure the fixed palette exists to prevent) and a halo behind it (same
   problem, softened). Vertical rules were chosen deliberately over both.
+
+Both tests key off the daily **high**, which makes them mutually exclusive — a
+day cannot reach 86 °F and stay under 50 °F — so there is no precedence rule to
+get wrong. An earlier version defined the cold end on the daily *minimum*, which
+overlapped with capped days constantly (a 90/48 spring day hits both) and needed
+a tiebreak. `dayLimitKind()` in `core/gdu.js` is the single source for both
+thresholds; the chart, its legend and the PDF all call it.
 
 **Not a strict "maxed out."** The literal reading of red is a full 36 GDU,
 which needs the *low* at 86 °F too — that essentially never happens in Iowa and

@@ -248,6 +248,39 @@ export function offsetAtTarget(cum, target) {
 }
 
 /**
+ * Which of the formula's two limits a day ran into, if either.
+ *
+ *   "capped" — the high reached the 86 °F cap. Every degree past it
+ *              added nothing to development, so the curve is flatter
+ *              than the thermometer suggests and the plant spent that
+ *              heat on stress instead.
+ *   "zero"   — the high never got above 50 °F, so the day never rose to
+ *              the base at all and earned no GDUs whatsoever.
+ *
+ * The two are mutually exclusive by construction — a day cannot both
+ * reach 86 and stay under 50 — so there is no precedence to get wrong.
+ * That is a consequence of defining "zero" on the HIGH rather than the
+ * low: an earlier version keyed the cold end off the daily minimum,
+ * which overlapped with capped days constantly (a 90/48 spring day hits
+ * both) and needed a tiebreak rule.
+ *
+ * Lives here rather than in the chart because three call sites need the
+ * same answer — the SVG chart, its legend, and the PDF — and three
+ * copies of a threshold is how they drift apart.
+ *
+ * @param {number} tmax
+ * @param {number} tmin
+ * @returns {"capped"|"zero"|null}
+ */
+export function dayLimitKind(tmax, tmin) {
+  if (!Number.isFinite(tmax) || !Number.isFinite(tmin)) return null;
+  const hi = Math.max(tmax, tmin);
+  if (hi >= GDU_CAP_F) return "capped";
+  if (hi <= GDU_BASE_F) return "zero";
+  return null;
+}
+
+/**
  * Temperature summary for the stretch the crop spent in one growth
  * stage.
  *

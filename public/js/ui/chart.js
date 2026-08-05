@@ -38,7 +38,7 @@
 //                     everything else without competing for hue
 
 import { addDays, daysBetween, formatShort } from "../core/dates.js";
-import { GDU_BASE_F, GDU_CAP_F } from "../core/gdu.js";
+import { GDU_BASE_F, GDU_CAP_F, dayLimitKind } from "../core/gdu.js";
 
 const SERIES_STYLE = {
   current: { varName: "--gdu-current", width: 3, dash: null, label: "This season" },
@@ -341,11 +341,13 @@ function buildSvg(width, height, season, hybrid, brand) {
  * is the visual answer to "it was blistering all week, why didn't we
  * gain more GDUs".
  *
- * BLUE — the low fell to 50 °F or below, so that half of the day counted
- * zero. The day still earns whatever its daytime half was worth.
+ * BLUE — the high never got above 50 °F, so the day never reached the
+ * base and earned no GDUs at all. Rare in season by design: this marks
+ * days the crop simply did not develop, not merely chilly nights.
  *
  * Full plot height and drawn UNDER everything, so the five curves stay
- * readable across them. Red wins when a day does both.
+ * readable across them. The two kinds are mutually exclusive — see
+ * dayLimitKind — so there is no precedence to get wrong.
  *
  * OBSERVED DAYS ONLY. The solid line also covers the 16-day forecast,
  * but marking a forecast day red asserts a measurement nobody has taken.
@@ -361,11 +363,9 @@ function drawLimitDays(root, season, x, top, bottom) {
     const rec = index[addDays(season.plantingIso, i)];
     if (!rec || rec.source !== "observed") continue;
     if (!Number.isFinite(rec.tmax) || !Number.isFinite(rec.tmin)) continue;
-    const hi = Math.max(rec.tmax, rec.tmin);
-    const lo = Math.min(rec.tmax, rec.tmin);
-    const cls = hi >= GDU_CAP_F ? "gdu-limit-capped" : lo <= GDU_BASE_F ? "gdu-limit-zero" : null;
-    if (!cls) continue;
-    group.appendChild(svg("line", { class: `gdu-limit-day ${cls}`, x1: x(i), x2: x(i), y1: top, y2: bottom }));
+    const kind = dayLimitKind(rec.tmax, rec.tmin);
+    if (!kind) continue;
+    group.appendChild(svg("line", { class: `gdu-limit-day gdu-limit-${kind}`, x1: x(i), x2: x(i), y1: top, y2: bottom }));
   }
   if (group.childNodes.length) root.appendChild(group);
 }
@@ -519,11 +519,8 @@ export function limitDayCounts(season) {
   for (let i = 1; i <= lastObserved; i++) {
     const rec = index[addDays(season.plantingIso, i)];
     if (!rec || rec.source !== "observed") continue;
-    if (!Number.isFinite(rec.tmax) || !Number.isFinite(rec.tmin)) continue;
-    const hi = Math.max(rec.tmax, rec.tmin);
-    const lo = Math.min(rec.tmax, rec.tmin);
-    if (hi >= GDU_CAP_F) out.capped++;
-    else if (lo <= GDU_BASE_F) out.zero++;
+    const kind = dayLimitKind(rec.tmax, rec.tmin);
+    if (kind) out[kind]++;
   }
   return out;
 }
@@ -557,7 +554,7 @@ export function buildChartLegend(season) {
   const limits = limitDayCounts(season);
   for (const [n, cls, label] of [
     [limits.capped, "gdu-legend-swatch-capped", `Days the high hit ${GDU_CAP_F} °F — heat above it added nothing`],
-    [limits.zero, "gdu-legend-swatch-zero", `Days the low fell to ${GDU_BASE_F} °F or below — that half counted zero`],
+    [limits.zero, "gdu-legend-swatch-zero", `Days that never got above ${GDU_BASE_F} °F — no GDUs at all`],
   ]) {
     if (!n) continue;
     const item = document.createElement("span");

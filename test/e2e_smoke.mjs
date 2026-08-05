@@ -66,12 +66,17 @@ function isoRange(startIso, endIso) {
  * deterministic per-year offset so some years are genuinely warmer than
  * others and the 10th/90th percentile bands are meaningfully apart.
  */
+// Shifted at the very end of the suite to drive an all-cold season, so
+// the blue "never got above 50 °F" path gets exercised — the default
+// fixture runs hot and produces none.
+let TEMP_SHIFT = 0;
+
 function tempsFor(iso) {
   const year = Number(iso.slice(0, 4));
   const doy = Math.round((Date.parse(iso + "T00:00:00Z") - Date.parse(year + "-01-01T00:00:00Z")) / MS_DAY);
   const seasonal = 52 - 32 * Math.cos((2 * Math.PI * (doy - 15)) / 365);
   const yearOffset = ((year * 7919) % 13) - 6; // -6 .. +6 °F, stable per year
-  const mean = seasonal + yearOffset;
+  const mean = seasonal + yearOffset + TEMP_SHIFT;
   return { tmax: Math.round((mean + 12) * 10) / 10, tmin: Math.round((mean - 12) * 10) / 10 };
 }
 
@@ -163,6 +168,15 @@ async function main() {
   // Every result card folds, and most default shut. Tests that read a
   // card's contents open everything first; the DEFAULTS themselves are
   // asserted once, on the first results render, before this is called.
+  // The built-in list is now an inline combobox on the Hybrid field, not
+  // a modal. Focus opens it; a click on a row fills the form.
+  const pickFromList = async (query, expect) => {
+    await page.click('input[aria-label="Hybrid name"]');
+    await page.fill('input[aria-label="Hybrid name"]', query);
+    await page.waitForFunction((n) => document.querySelectorAll(".gdu-suggest-option").length === n, expect, { timeout: 5000 });
+    await page.locator(".gdu-suggest-option").first().click();
+  };
+
   const expandAllCards = async () => {
     await page.waitForSelector(".gdu-card-toggle");
     // Loop rather than click-all-at-once: clicking an already-open card
@@ -213,51 +227,58 @@ async function main() {
   await page.reload({ waitUntil: "networkidle" });
   await page.waitForSelector(".screen-body");
 
-  // ---- collapsed hybrid card ------------------------------------------
-  // With no hybrid entered the card arrives folded shut, so a
-  // ZIP-and-date run doesn't scroll past four empty boxes.
-  const collapsedAtStart = await page.locator(".gdu-hybrid-body").isHidden();
-  check("the hybrid card starts collapsed when empty", () => assert.equal(collapsedAtStart, true));
-  // The header bar has to run edge to edge like every other card's, and
-  // sit at the same height as the one above it. It regressed once by
-  // being wrapped in a flex row, which cut the green off mid-card.
-  const headerGeom = await page.evaluate(() => {
-    const cards = [...document.querySelectorAll(".card")];
-    const hybridCard = cards.find((c) => /Hybrid \(optional\)/.test(c.textContent));
-    const dateCard = cards.find((c) => /Planting Date/.test(c.textContent));
-    const r = (el) => { const b = el.getBoundingClientRect(); return { l: Math.round(b.left), w: Math.round(b.width), h: Math.round(b.height) }; };
+  // ---- hybrid mode toggle ----------------------------------------------
+  // Two mutually exclusive ways to run this, expressed as a segmented
+  // control. Exactly one is always selected, so the card's state is
+  // never ambiguous — which two independent buttons could not promise.
+  const modeStart = await page.evaluate(() => {
+    const btns = [...document.querySelectorAll(".gdu-mode-btn")];
     return {
-      hybridHeader: r(hybridCard.querySelector(".section-header")),
-      hybridCard: r(hybridCard),
-      dateHeader: r(dateCard.querySelector(".section-header")),
-      dateCard: r(dateCard),
+      labels: btns.map((b) => b.textContent.trim()),
+      pressed: btns.map((b) => b.getAttribute("aria-pressed")),
+      heights: btns.map((b) => Math.round(b.getBoundingClientRect().height)),
+      widths: btns.map((b) => Math.round(b.getBoundingClientRect().width)),
+      tops: btns.map((b) => Math.round(b.getBoundingClientRect().top)),
+      bodyHidden: document.querySelector(".gdu-hybrid-body").hidden,
+      // The old header chevron is gone; the toggle is the only expander.
+      legacyToggle: document.querySelectorAll(".gdu-hybrid-toggle").length,
     };
   });
-  check("the Hybrid header bar spans the whole card like every other one", () => {
-    // Measured against the Planting Date card directly above it rather
-    // than against the card box, since .section-header bleeds to the
-    // card's CONTENT edge (inside its border), not its outer edge.
-    assert.equal(headerGeom.hybridHeader.w, headerGeom.dateHeader.w, "width should match the Planting Date header");
-    assert.equal(headerGeom.hybridHeader.l - headerGeom.hybridCard.l, headerGeom.dateHeader.l - headerGeom.dateCard.l, "left inset should match");
+  check("the toggle offers Enter Hybrid and GDU Only", () => {
+    assert.deepEqual(modeStart.labels, ["Enter Hybrid", "GDU Only"]);
   });
-  check("the toggle does not make the header taller than a plain one", () => {
-    const diff = Math.abs(headerGeom.hybridHeader.h - headerGeom.dateHeader.h);
-    assert.ok(diff <= 2, `header heights differ by ${diff}px (${headerGeom.hybridHeader.h} vs ${headerGeom.dateHeader.h})`);
+  check("exactly one mode is selected, never both or neither", () => {
+    assert.equal(modeStart.pressed.filter((p) => p === "true").length, 1);
   });
-  const toggleTap = await page.evaluate(() => {
-    const el = document.querySelector(".gdu-hybrid-toggle");
-    const after = getComputedStyle(el, "::after");
-    return { visible: Math.round(el.getBoundingClientRect().height), tap: parseInt(after.height, 10) };
+  check("GDU Only is the mode on a fresh run, with the detail folded shut", () => {
+    assert.equal(modeStart.pressed[1], "true");
+    assert.equal(modeStart.bodyHidden, true);
   });
-  check("the toggle keeps a full 44px tap target despite the compact chip", () => {
-    assert.ok(toggleTap.tap >= 44, `tap area only ${toggleTap.tap}px`);
+  check("the two halves are equal and both a full 44px target", () => {
+    assert.equal(modeStart.tops[0], modeStart.tops[1], "should share a row");
+    assert.ok(Math.abs(modeStart.widths[0] - modeStart.widths[1]) <= 1, "equal halves");
+    for (const hgt of modeStart.heights) assert.ok(hgt >= 44, `only ${hgt}px tall`);
   });
-
+  check("the old header chevron is gone", () => {
+    // Two controls for one piece of state is how they end up disagreeing.
+    assert.equal(modeStart.legacyToggle, 0);
+  });
   const emptyNote = await page.locator(".gdu-hybrid-empty").textContent();
-  check("the collapsed card says what Calculate will do without a hybrid", () => assert.match(emptyNote, /no silk or black layer dates/i));
+  check("the folded card says what Calculate will do without a hybrid", () => assert.match(emptyNote, /no silk or black layer dates/i));
   if (SHOTS) await page.screenshot({ path: path.join(SHOT_DIR, "16-hybrid-collapsed.png"), fullPage: true });
-  await page.locator(".gdu-hybrid-toggle").click();
-  await page.waitForSelector(".gdu-hybrid-body:not([hidden])");
+
+  await page.getByRole("button", { name: "Enter Hybrid" }).click();
+  await page.waitForFunction(() => document.querySelector(".gdu-hybrid-body").hidden === false);
+  const afterEnter = await page.evaluate(() => ({
+    pressed: [...document.querySelectorAll(".gdu-mode-btn")].map((b) => b.getAttribute("aria-pressed")),
+    focused: document.activeElement.getAttribute("aria-label"),
+  }));
+  check("Enter Hybrid expands the detail and selects itself", () => {
+    assert.deepEqual(afterEnter.pressed, ["true", "false"]);
+  });
+  check("Enter Hybrid drops the caret into the hybrid field", () => {
+    assert.equal(afterEnter.focused, "Hybrid name");
+  });
 
   // The shared stylesheet resets `font: inherit` on button/input/textarea
   // but not select, so the Brand box used to render at the browser's own
@@ -292,50 +313,65 @@ async function main() {
   const namePlaceholder = await page.getAttribute('input[aria-label="Hybrid name"]', "placeholder");
   check("the hybrid placeholder carries the Brand View's code", () => assert.equal(namePlaceholder, "e.g. NC 09-90 PCE"));
 
-  // ---- built-in hybrid list ------------------------------------------
-  await page.waitForSelector(".gdu-pick-hybrid-btn:not([disabled])", { timeout: 10000 });
-  const pickLabel = await page.locator(".gdu-pick-hybrid-btn").textContent();
-  check("the hybrid list button says just Choose Hybrid", () => assert.equal(pickLabel.trim(), "Choose Hybrid"));
-  // The button no longer carries the catalog count, so the row count in
-  // the picker below is the only remaining proof that the whole list
-  // loaded rather than a truncated one.
-  const actionRow = await page.evaluate(() => {
-    const pick = document.querySelector(".gdu-pick-hybrid-btn");
-    const clear = document.querySelector(".gdu-clear-hybrid-btn");
-    const r = (el) => { const b = el.getBoundingClientRect(); return { t: Math.round(b.top), w: Math.round(b.width), h: Math.round(b.height) }; };
-    return { pick: r(pick), clear: r(clear), sameRow: pick.parentElement === clear.parentElement };
+  // ---- built-in hybrid list, inline on the field ----------------------
+  // The modal picker is gone. Focus the box and the whole list drops
+  // down; type and it filters. One control instead of two, and no round
+  // trip through a dialog for what is really "fill in this box".
+  await page.click('input[aria-label="Hybrid name"]');
+  await page.waitForSelector(".gdu-suggest-option");
+  const listState = await page.evaluate(() => {
+    const box = document.querySelector(".gdu-suggest");
+    const rows = [...document.querySelectorAll(".gdu-suggest-option")];
+    return {
+      count: rows.length,
+      expanded: document.querySelector('input[aria-label="Hybrid name"]').getAttribute("aria-expanded"),
+      role: document.querySelector('input[aria-label="Hybrid name"]').getAttribute("role"),
+      scrolls: box.scrollHeight > box.clientHeight,
+      rowHeights: rows.slice(0, 5).map((r) => Math.round(r.getBoundingClientRect().height)),
+      rms: rows.map((r) => Number((r.textContent.match(/(\d+) day/) || [])[1])).filter(Number.isFinite),
+      first: rows[0].textContent,
+      legacyModal: document.querySelectorAll(".hybrid-picker-option").length,
+    };
   });
-  check("Choose Hybrid and Clear Hybrid sit side by side at the top", () => {
-    assert.equal(actionRow.sameRow, true, "should share a row");
-    assert.equal(actionRow.pick.t, actionRow.clear.t, "should be vertically aligned");
-    assert.ok(Math.abs(actionRow.pick.w - actionRow.clear.w) <= 1, "should be equal halves");
-    assert.ok(actionRow.pick.h >= 44 && actionRow.clear.h >= 44, "both need a 44px target");
+  check("tapping the field drops down the whole list", () => {
+    assert.equal(listState.count, 133);
+    assert.equal(listState.expanded, "true");
+    assert.equal(listState.role, "combobox");
+    assert.ok(listState.scrolls, "the list has to scroll, not run off the card");
   });
+  check("the modal picker is gone", () => assert.equal(listState.legacyModal, 0));
+  check("every row is a full 44px target", () => {
+    for (const hgt of listState.rowHeights) assert.ok(hgt >= 44, `row only ${hgt}px`);
+  });
+  check("the list is still sorted shortest maturity first", () => {
+    assert.equal(listState.rms.length, 133);
+    for (let i = 1; i < listState.rms.length; i++) {
+      assert.ok(listState.rms[i] >= listState.rms[i - 1], `RM out of order at row ${i}`);
+    }
+  });
+  check("rows carry the Brand View's code and both GDU numbers", () => {
+    assert.match(listState.first, /NC /);
+    assert.match(listState.first, /silk/);
+    assert.match(listState.first, /black layer/);
+  });
+  if (SHOTS) await page.screenshot({ path: path.join(SHOT_DIR, "06-hybrid-list.png") });
 
-  await page.locator(".gdu-pick-hybrid-btn").click();
-  await page.waitForSelector(".hybrid-picker-option");
-  const rmHeads = await page.locator(".hybrid-picker-rm-head").count();
-  check("the picker has no RM section headings", () => assert.equal(rmHeads, 0));
-  const pickerRows = await page.locator(".hybrid-picker-option").allTextContents();
-  check("the picker is still sorted shortest maturity first", () => {
-    // Row meta reads "<rm> day · ...", so the RM sequence is readable
-    // straight off the rendered list.
-    const rms = pickerRows.map((t) => Number((t.match(/(\d+) day/) || [])[1])).filter(Number.isFinite);
-    assert.equal(rms.length, 133);
-    for (let i = 1; i < rms.length; i++) assert.ok(rms[i] >= rms[i - 1], `RM out of order at row ${i}: ${rms[i - 1]} then ${rms[i]}`);
-  });
-  if (SHOTS) await page.screenshot({ path: path.join(SHOT_DIR, "06-hybrid-picker.png") });
-
-  await page.fill('input[aria-label="Search hybrids"]', "09-90");
-  await page.waitForFunction(() => document.querySelectorAll(".hybrid-picker-option").length === 1);
-  const rowText = await page.locator(".hybrid-picker-option").first().textContent();
-  check("search narrows to the matching variety with its GDU numbers", () => {
+  // Typing filters it.
+  await page.fill('input[aria-label="Hybrid name"]', "09-90");
+  await page.waitForFunction(() => document.querySelectorAll(".gdu-suggest-option").length === 1);
+  const rowText = await page.locator(".gdu-suggest-option").first().textContent();
+  check("typing narrows to the matching variety with its GDU numbers", () => {
     assert.match(rowText, /09-90 PCE/);
     assert.match(rowText, /109 day/);
     assert.match(rowText, /1,290 silk/);
     assert.match(rowText, /2,620 black layer/);
   });
-  await page.locator(".hybrid-picker-option").first().click();
+
+  // Keyboard: arrow to highlight, Enter to take it.
+  await page.keyboard.press("ArrowDown");
+  const highlighted = await page.locator(".gdu-suggest-active").count();
+  check("arrow keys highlight a row", () => assert.equal(highlighted, 1));
+  await page.keyboard.press("Enter");
 
   await page.waitForSelector(".gdu-catalog-line");
   const silkVal = await page.inputValue('input[aria-label="GDUs to silk"]');
@@ -370,10 +406,7 @@ async function main() {
 
   // 89-58 SSPRORIB is ~350 GDU above its RM neighbours. Loaded as-is,
   // per explicit request, but the app must say so.
-  await page.locator(".gdu-pick-hybrid-btn").click();
-  await page.fill('input[aria-label="Search hybrids"]', "89-58");
-  await page.waitForFunction(() => document.querySelectorAll(".hybrid-picker-option").length === 1);
-  await page.locator(".hybrid-picker-option").first().click();
+  await pickFromList("89-58", 1);
   await page.waitForSelector(".gdu-catalog-outlier");
   const outlier = await page.locator(".gdu-catalog-outlier").textContent();
   const outlierSilk = await page.inputValue('input[aria-label="GDUs to silk"]');
@@ -386,10 +419,7 @@ async function main() {
   if (SHOTS) await page.screenshot({ path: path.join(SHOT_DIR, "07-outlier-note.png"), fullPage: true });
 
   // A hybrid with an ordinary rating must NOT be flagged.
-  await page.locator(".gdu-pick-hybrid-btn").click();
-  await page.fill('input[aria-label="Search hybrids"]', "09-90");
-  await page.waitForFunction(() => document.querySelectorAll(".hybrid-picker-option").length === 1);
-  await page.locator(".hybrid-picker-option").first().click();
+  await pickFromList("09-90", 1);
   await page.waitForSelector(".gdu-catalog-line");
   const stillFlagged = await page.locator(".gdu-catalog-outlier").count();
   check("an ordinary rating is not flagged", () => assert.equal(stillFlagged, 0));
@@ -480,7 +510,8 @@ async function main() {
   // included, since the RM-only section above left 105 in the box and
   // the header legitimately reports whatever RM is currently set.
   await page.getByRole("button", { name: "Back to inputs" }).click();
-  await page.waitForSelector(".gdu-pick-hybrid-btn");
+  await page.waitForSelector(".gdu-mode-btn");
+  if (await page.locator(".gdu-hybrid-body").isHidden()) await page.getByRole("button", { name: "Enter Hybrid" }).click();
   await page.fill('input[aria-label="Relative maturity"]', "109");
   await page.fill('input[aria-label="GDUs to silk"]', "1290");
   await page.fill('input[aria-label="GDUs to black layer"]', "2620");
@@ -1086,45 +1117,57 @@ async function main() {
   });
   if (SHOTS) await page.screenshot({ path: path.join(SHOT_DIR, "15-projected-range.png"), fullPage: true });
 
-  // ---- Clear Hybrid ----------------------------------------------------
+  // ---- GDU Only ---------------------------------------------------------
+  // The mode is a decision, not a setting: picking it clears the hybrid,
+  // folds the detail shut AND runs the calculation, rather than leaving
+  // the user to find the button below.
   await page.evaluate(() => { window.location.hash = "#/calculator"; });
-  await page.waitForSelector(".gdu-hybrid-toggle");
+  await page.waitForSelector(".gdu-mode-btn");
+  if (await page.locator(".gdu-hybrid-body").isHidden()) await page.getByRole("button", { name: "Enter Hybrid" }).click();
   const beforeClear = await page.inputValue('input[aria-label="Hybrid name"]');
-  check("a hybrid is loaded before clearing", () => assert.ok(beforeClear.length > 0));
-  await page.getByRole("button", { name: "Clear Hybrid" }).click();
-  await page.waitForFunction(() => document.querySelector(".gdu-hybrid-body")?.hidden === true);
-  const cleared = await page.evaluate(() => ({
+  check("a hybrid is loaded before switching mode", () => assert.ok(beforeClear.length > 0));
+
+  await page.getByRole("button", { name: "GDU Only" }).click();
+  await page.waitForSelector(".gdu-chart-svg", { timeout: 20000 });
+  const afterGduOnly = await page.evaluate(() => ({
+    onResults: window.location.hash,
+    body: document.querySelector(".screen-body").textContent,
+    stored: JSON.parse(localStorage.getItem("gdu.currentHybrid") || "{}"),
+    location: JSON.parse(localStorage.getItem("gdu.location") || "null"),
+    planting: JSON.parse(localStorage.getItem("gdu.plantingDate") || "null"),
+  }));
+  check("GDU Only calculates immediately", () => {
+    assert.match(afterGduOnly.onResults, /#\/results/);
+    assert.match(afterGduOnly.body, /No hybrid entered/i);
+  });
+  check("GDU Only wipes the stored hybrid, not the field or the date", () => {
+    // A leftover value here would let the next typed hybrid inherit
+    // another one's numbers.
+    assert.deepEqual(afterGduOnly.stored, {});
+    assert.ok(afterGduOnly.location, "location should survive");
+    assert.ok(afterGduOnly.planting, "planting date should survive");
+  });
+
+  await page.evaluate(() => { window.location.hash = "#/calculator"; });
+  await page.waitForSelector(".gdu-mode-btn");
+  const backOnCalc = await page.evaluate(() => ({
+    pressed: [...document.querySelectorAll(".gdu-mode-btn")].map((b) => b.getAttribute("aria-pressed")),
+    bodyHidden: document.querySelector(".gdu-hybrid-body").hidden,
     name: document.querySelector('input[aria-label="Hybrid name"]').value,
     silk: document.querySelector('input[aria-label="GDUs to silk"]').value,
     bl: document.querySelector('input[aria-label="GDUs to black layer"]').value,
     rm: document.querySelector('input[aria-label="Relative maturity"]').value,
-    stored: JSON.parse(localStorage.getItem("gdu.currentHybrid") || "{}"),
-    collapsed: document.querySelector(".gdu-hybrid-body").hidden,
-    location: JSON.parse(localStorage.getItem("gdu.location") || "null"),
-    planting: JSON.parse(localStorage.getItem("gdu.plantingDate") || "null"),
+    saved: document.querySelectorAll(".gdu-saved-row").length,
   }));
-  check("Clear Hybrid empties every box and folds the card shut", () => {
-    assert.equal(cleared.name, "");
-    assert.equal(cleared.silk, "");
-    assert.equal(cleared.bl, "");
-    assert.equal(cleared.rm, "");
-    assert.equal(cleared.collapsed, true);
+  check("coming back, GDU Only is still the selected mode and every box is empty", () => {
+    assert.deepEqual(backOnCalc.pressed, ["false", "true"]);
+    assert.equal(backOnCalc.bodyHidden, true);
+    assert.equal(backOnCalc.name, "");
+    assert.equal(backOnCalc.silk, "");
+    assert.equal(backOnCalc.bl, "");
+    assert.equal(backOnCalc.rm, "");
   });
-  check("Clear Hybrid wipes the stored hybrid, not the field or the date", () => {
-    // A leftover value here would let the next typed hybrid inherit
-    // another one's numbers.
-    assert.deepEqual(cleared.stored, {});
-    assert.ok(cleared.location, "location should survive");
-    assert.ok(cleared.planting, "planting date should survive");
-  });
-  const savedStillThere = await page.locator(".gdu-saved-row").count();
-  check("Clear Hybrid leaves the saved list alone", () => assert.ok(savedStillThere >= 0));
-  await page.getByRole("button", { name: "Calculate GDUs" }).click();
-  await page.waitForSelector(".gdu-chart-svg", { timeout: 20000 });
-  const afterClearBody = await page.locator(".screen-body").textContent();
-  check("calculating straight after Clear Hybrid gives the no-hybrid view", () => {
-    assert.match(afterClearBody, /No hybrid entered/i);
-  });
+  check("GDU Only leaves the saved list alone", () => assert.ok(backOnCalc.saved >= 0));
 
   // ---- no hybrid at all: ZIP + planting date only ---------------------
   // The whole point is that a grower with no tech sheet in hand can still
@@ -1133,10 +1176,10 @@ async function main() {
   await page.evaluate(() => localStorage.setItem("gdu.themeMode", JSON.stringify("light")));
   await page.reload({ waitUntil: "networkidle" });
   await page.evaluate(() => { window.location.hash = "#/calculator"; });
-  await page.waitForSelector(".gdu-hybrid-toggle");
-  // The card is folded shut after Clear Hybrid; open it to prove the
-  // boxes really are empty rather than just out of sight.
-  if (await page.locator(".gdu-hybrid-body").isHidden()) await page.locator(".gdu-hybrid-toggle").click();
+  await page.waitForSelector(".gdu-mode-btn");
+  // The card is folded shut in GDU-only mode; open it to prove the boxes
+  // really are empty rather than just out of sight.
+  if (await page.locator(".gdu-hybrid-body").isHidden()) await page.getByRole("button", { name: "Enter Hybrid" }).click();
   await page.waitForSelector('input[aria-label="GDUs to silk"]');
   await page.fill('input[aria-label="Hybrid name"]', "");
   await page.fill('input[aria-label="GDUs to silk"]', "");
@@ -1192,6 +1235,47 @@ async function main() {
     // No stage table or stage chart to carry, so it collapses to one sheet.
     assert.ok(countPdfPages(noHybridBuf) <= 2, "must not spill past two sheets");
   });
+
+  // ---- the blue (zero-GDU) marker --------------------------------------
+  // The default fixture never drops below 50 °F, so blue is otherwise
+  // never drawn and its rendering path would ship untested. Drive the
+  // whole synthetic climate cold and check it appears — and that red
+  // disappears, which proves the two are keyed off the same high.
+  TEMP_SHIFT = -50;
+  await page.evaluate(() => {
+    for (const k of Object.keys(localStorage)) if (k.startsWith("gdu.wx.")) localStorage.removeItem(k);
+    localStorage.setItem("gdu.themeMode", JSON.stringify("light"));
+  });
+  await page.reload({ waitUntil: "networkidle" });
+  await page.evaluate(() => { window.location.hash = "#/results"; });
+  await page.waitForSelector(".gdu-chart-svg", { timeout: 20000 });
+  const coldRun = await page.evaluate(() => {
+    const seg = [...document.querySelectorAll(".gdu-limit-day")];
+    const zero = seg.find((e) => e.classList.contains("gdu-limit-zero"));
+    return {
+      capped: seg.filter((e) => e.classList.contains("gdu-limit-capped")).length,
+      zero: seg.filter((e) => e.classList.contains("gdu-limit-zero")).length,
+      stroke: zero ? getComputedStyle(zero).stroke : null,
+      vertical: zero ? zero.getAttribute("x1") === zero.getAttribute("x2") : false,
+      legend: [...document.querySelectorAll(".gdu-legend-item")].map((i) => i.textContent),
+    };
+  });
+  check("a season that never reaches 50 °F is marked blue throughout", () => {
+    assert.ok(coldRun.zero > 0, "expected zero-GDU days in an all-cold season");
+    assert.equal(coldRun.stroke, "rgb(11, 77, 162)");
+    assert.equal(coldRun.vertical, true, "the mark must be a vertical rule");
+  });
+  check("no day is both capped and zero once the season turns cold", () => {
+    // Both are keyed off the daily HIGH, so a cold season cannot produce
+    // a capped day. Under the old low-based rule it could.
+    assert.equal(coldRun.capped, 0);
+  });
+  check("the legend swaps to the blue key and drops the red one", () => {
+    const joined = coldRun.legend.join(" | ");
+    assert.match(joined, /never got above 50 °F/);
+    assert.ok(!/high hit 86 °F/.test(joined), "the red key should be gone with no red days");
+  });
+  TEMP_SHIFT = 0;
 
   // ---- help --------------------------------------------------------
   await page.evaluate(() => {

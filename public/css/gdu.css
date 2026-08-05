@@ -70,25 +70,6 @@
   color: var(--text-muted);
 }
 
-.gdu-or-divider {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 14px 0;
-  color: var(--text-muted);
-  font-size: 0.8rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.gdu-or-divider::before,
-.gdu-or-divider::after {
-  content: "";
-  flex: 1;
-  height: 1px;
-  background: var(--border);
-}
-
 .gdu-inline-row {
   display: flex;
   gap: 10px;
@@ -551,29 +532,6 @@
 }
 
 /* ---------- hybrid picker modal ---------- */
-
-/* Two lines per row: variety, then the numbers being chosen. Overrides
-   .search-list-option's own row layout rather than replacing the class,
-   so hover, selection and the 44px tap target all still come from the
-   shared stylesheet. */
-.hybrid-picker-option {
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-}
-
-.hybrid-picker-name {
-  font-weight: 600;
-}
-
-.hybrid-picker-gdu {
-  font-size: 0.8rem;
-  color: var(--text-muted);
-}
-
-.search-list-option-selected .hybrid-picker-gdu {
-  color: var(--accent-strong);
-}
 
 /* ---------- stage + data section ---------- */
 
@@ -1106,60 +1064,10 @@ select.text-input {
   margin-left: 6px;
 }
 
-/* ---------- collapsible hybrid card ---------- */
-
-/* The show/hide control sits in the header bar itself, so the bar keeps
-   the full-width edge-to-edge bleed every other card header has. */
-.gdu-section-header-action {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-/* Negative vertical margin keeps the chip from inflating the header bar
-   past the height of a plain one — "Hybrid (optional)" has to line up
-   with "Planting Date" directly above it. */
-.gdu-hybrid-toggle {
-  position: relative;
-  flex-shrink: 0;
-  margin: -6px 0;
-  min-height: 30px;
-  padding: 0 13px;
-  border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.5);
-  background: rgba(255, 255, 255, 0.14);
-  color: #ffffff;
-  font: inherit;
-  font-size: 0.8rem;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-/* The visible chip is deliberately short; the tap target is not. This
-   pseudo-element takes the hit area back to 44px without changing a
-   single pixel of layout. */
-.gdu-hybrid-toggle::after {
-  content: "";
-  position: absolute;
-  left: -4px;
-  right: -4px;
-  top: 50%;
-  height: 44px;
-  transform: translateY(-50%);
-}
+/* ---------- hybrid card ---------- */
 
 .gdu-hybrid-empty {
   margin-top: 4px;
-}
-
-/* Choose and Clear share a row; each stays a full 44px touch target and
-   an equal half so neither reads as the primary action. min-width:0 lets
-   them shrink rather than overflow on a 320px screen. */
-.gdu-hybrid-actions .btn {
-  flex: 1 1 0;
-  min-width: 0;
-  margin-top: 0;
 }
 
 /* ---------- collapsible result cards ---------- */
@@ -1307,4 +1215,97 @@ button.gdu-card-toggle:not(.gdu-card-toggle-open) {
 
 .gdu-legend-swatch-zero {
   background-color: var(--gdu-limit-zero) !important;
+}
+
+/* ---------- hybrid mode toggle ---------- */
+
+/* A segmented control, not two buttons: exactly one is always selected,
+   which is the actual state being expressed. Equal halves so neither
+   reads as the primary action. */
+.gdu-mode-toggle {
+  display: flex;
+  gap: 0;
+  margin-bottom: 14px;
+  border: 1px solid var(--accent-strong);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.gdu-mode-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 44px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--accent-strong);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.gdu-mode-btn + .gdu-mode-btn {
+  border-left: 1px solid var(--accent-strong);
+}
+
+/* The selected half is filled. Colour alone would not carry this, so the
+   pressed state is also exposed via aria-pressed for assistive tech. */
+.gdu-mode-btn-active {
+  background: var(--accent-strong);
+  color: var(--card-bg);
+}
+
+/* ---------- inline hybrid list ---------- */
+
+/* The list hangs off the field rather than living behind a modal, so the
+   field needs to be a positioning context and the list has to escape the
+   card's normal flow without pushing everything below it down. */
+.gdu-hybrid-field {
+  position: relative;
+}
+
+.gdu-suggest {
+  position: absolute;
+  z-index: 20;
+  left: 0;
+  right: 0;
+  /* Sits directly under the input; the field-note below is static so the
+     list overlays it rather than shoving the form around as you type. */
+  top: calc(100% - 42px);
+  max-height: 264px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.16);
+}
+
+.gdu-suggest-option {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 9px 12px;
+  min-height: 44px;
+  justify-content: center;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+}
+
+.gdu-suggest-option:last-child {
+  border-bottom: none;
+}
+
+.gdu-suggest-option:hover,
+.gdu-suggest-active {
+  background: var(--bg);
+}
+
+.gdu-suggest-name {
+  font-weight: 700;
+}
+
+.gdu-suggest-meta {
+  font-size: 0.78rem;
+  color: var(--text-muted);
 }

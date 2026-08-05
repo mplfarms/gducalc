@@ -5,4 +5,4 @@
 // delivered build — same convention as Corn Plot Harvest, but this app
 // numbers itself independently starting at v1.
 
-export const APP_VERSION = "v2.9 (Beta)";
+export const APP_VERSION = "v3.0 (Beta)";

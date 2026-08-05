@@ -7,7 +7,7 @@
 
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { dailyGdu, percentile, accumulate, envelopeFromCalendarDate, offsetAtTarget, firstFreezeStats, buildDailyIndex, bandTempStats, GDU_MAX_PER_DAY } from "../public/js/core/gdu.js";
+import { dailyGdu, percentile, accumulate, envelopeFromCalendarDate, offsetAtTarget, firstFreezeStats, buildDailyIndex, bandTempStats, dayLimitKind, GDU_MAX_PER_DAY } from "../public/js/core/gdu.js";
 import { addDays, daysBetween, isoForYear, isoToUtcMs, utcMsToIso, monthDayOf, formatShort } from "../public/js/core/dates.js";
 import { buildSeason, baselineYearsFor, SEASON_DAYS } from "../public/js/core/season.js";
 import { STAGE_LADDER, stagesForHybrid, datedStages, REFERENCE_SILK, REFERENCE_BLACK_LAYER } from "../public/js/core/stages.js";
@@ -489,7 +489,7 @@ test("catalog has no duplicate variety names", () => {
 });
 
 test("catalog is sorted by maturity, as the picker's RM headings assume", () => {
-  // hybridPicker.js emits a heading each time RM changes; unsorted data
+  // The inline hybrid list is rendered in catalog order; unsorted data
   // would produce the same heading several times down the list.
   for (let i = 1; i < catalogDoc.hybrids.length; i++) {
     assert.ok(catalogDoc.hybrids[i].rm >= catalogDoc.hybrids[i - 1].rm, `RM out of order at index ${i}`);
@@ -1054,10 +1054,36 @@ test("a day at or below the floor earns nothing, never a negative", () => {
   assert.equal(dailyGdu(30, 10), 0);
 });
 
-test("a cold night still leaves the daytime half worth something", () => {
-  // The blue mark says "that half counted zero", not "the day counted
-  // zero" - a 72/45 day still earns 11.
+test("blue marks a day that stayed under 50 ALL day, not one with a cold night", () => {
+  // The distinction that matters: a 72/45 day has a cold night but the
+  // crop still developed (11 GDU). Only a day that never rose to the
+  // base earned nothing, and only that gets marked.
+  assert.equal(dayLimitKind(48, 38), "zero");
+  assert.equal(dayLimitKind(50, 38), "zero"); // topping out AT the base still earns 0
+  assert.equal(dayLimitKind(72, 45), null);
   assert.equal(dailyGdu(72, 45), 11);
+});
+
+test("red marks a day whose high reached the cap", () => {
+  assert.equal(dayLimitKind(86, 60), "capped");
+  assert.equal(dayLimitKind(104, 72), "capped");
+  assert.equal(dayLimitKind(85, 60), null);
+});
+
+test("the two marks are mutually exclusive, so no tiebreak is needed", () => {
+  // Defining the cold end on the HIGH rather than the low is what buys
+  // this: keyed off the minimum, a 90/48 spring day would qualify as
+  // both and need a precedence rule nobody would remember.
+  for (const [hi, lo] of [[90, 48], [86, 86], [50, 50], [30, 10], [70, 55], [104, 40]]) {
+    const kind = dayLimitKind(hi, lo);
+    assert.ok(kind === null || kind === "capped" || kind === "zero", `${hi}/${lo} -> ${kind}`);
+  }
+  assert.equal(dayLimitKind(90, 48), "capped"); // not "zero" as well
+});
+
+test("a transposed row is still classified on the real high", () => {
+  assert.equal(dayLimitKind(40, 88), "capped");
+  assert.equal(dayLimitKind(NaN, 60), null);
 });
 
 console.log(`\n${passed} assertions passed.\n`);

@@ -19,7 +19,6 @@ import * as brandStore from "../stores/brandStore.js";
 import * as inputStore from "../stores/inputStore.js";
 import { navigate } from "../router.js";
 import { lookupZip } from "../../core/location.js";
-import { openHybridPicker } from "../components/hybridPicker.js";
 import * as catalog from "../../core/hybridCatalog.js";
 import { resolve as resolveHybridInputs, sourceLabel, accuracyNote, RM_FITTED_MIN, RM_FITTED_MAX, FITTED_N } from "../../core/hybridEstimate.js";
 import { formatShort, todayIso, yearOf } from "../../core/dates.js";
@@ -185,20 +184,110 @@ export function render(container) {
   brandSelectEl.value = wantBrand;
   if (wantBrand !== storedBrand) inputStore.updateHybrid({ brand: wantBrand });
 
+  // The built-in list used to live behind a modal. It now hangs off this
+  // field directly: type to filter, or tap and scroll the whole list.
+  // One control instead of two, and no round trip through a dialog for
+  // what is fundamentally "fill in this box".
+  const suggestEl = h("div", { className: "gdu-suggest", role: "listbox", "aria-label": "Hybrid list" });
+  let suggestOpen = false;
+  let activeIdx = -1;
+
   const nameInput = h("input", {
-    className: "text-input",
+    className: "text-input gdu-hybrid-input",
     type: "text",
     // The visible <label> isn't wired up with for/id, so screen readers
     // (and tests) had nothing stable to key on while the placeholder
     // moves with the Brand View.
     "aria-label": "Hybrid name",
+    // A combobox has to announce itself as one, or a screen-reader user
+    // gets a plain text box with an invisible list under it.
+    role: "combobox",
+    autocomplete: "off",
+    "aria-autocomplete": "list",
+    "aria-expanded": "false",
     placeholder: `e.g. ${brandedHybridName("09-90 PCE", brand)}`,
     value: state.hybrid.name || "",
     oninput: (e) => {
       inputStore.updateHybrid({ name: e.target.value });
       paintCatalogNote();
+      openSuggest(e.target.value);
     },
+    onfocus: () => openSuggest(nameInput.value),
+    onkeydown: (e) => {
+      if (e.key === "Escape") {
+        closeSuggest();
+        return;
+      }
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        if (!suggestOpen) return openSuggest(nameInput.value);
+        moveActive(e.key === "ArrowDown" ? 1 : -1);
+        return;
+      }
+      if (e.key === "Enter") {
+        const rows = suggestEl.querySelectorAll(".gdu-suggest-option");
+        if (!suggestOpen || rows.length === 0) return;
+        e.preventDefault();
+        // Enter with nothing highlighted takes the only match — the fast
+        // path when someone types a variety number they already know.
+        const pick = activeIdx >= 0 ? rows[activeIdx] : rows.length === 1 ? rows[0] : null;
+        if (pick) pick.click();
+      }
+    },
+    // A click on a row fires after blur, so hiding has to wait a beat or
+    // the list is gone before the tap lands.
+    onblur: () => setTimeout(closeSuggest, 160),
   });
+
+  function closeSuggest() {
+    suggestOpen = false;
+    activeIdx = -1;
+    suggestEl.hidden = true;
+    nameInput.setAttribute("aria-expanded", "false");
+  }
+  closeSuggest();
+
+  function moveActive(delta) {
+    const rows = [...suggestEl.querySelectorAll(".gdu-suggest-option")];
+    if (!rows.length) return;
+    activeIdx = (activeIdx + delta + rows.length) % rows.length;
+    rows.forEach((r, i) => r.classList.toggle("gdu-suggest-active", i === activeIdx));
+    rows[activeIdx].scrollIntoView({ block: "nearest" });
+  }
+
+  function openSuggest(query) {
+    if (!catalog.isAvailable()) return;
+    // A name typed in full already matches its own row; showing a
+    // one-item list over it is noise, so an exact hit closes instead.
+    const matches = catalog.findByVariety(query) ? [] : catalog.search(query);
+    suggestEl.textContent = "";
+    activeIdx = -1;
+    if (!matches.length) return closeSuggest();
+    for (const hy of matches) {
+      suggestEl.appendChild(
+        h(
+          "div",
+          {
+            className: "gdu-suggest-option",
+            role: "option",
+            "aria-selected": "false",
+            onmousedown: (e) => e.preventDefault(), // keep focus so blur can't beat the click
+            onclick: () => {
+              applyCatalogHybrid(hy);
+              closeSuggest();
+            },
+          },
+          [
+            h("span", { className: "gdu-suggest-name" }, brandedHybridName(hy.variety, brand)),
+            h("span", { className: "gdu-suggest-meta" }, `${hy.rm} day · ${hy.gduToSilk.toLocaleString()} silk · ${hy.gduToBlackLayer.toLocaleString()} black layer`),
+          ]
+        )
+      );
+    }
+    suggestOpen = true;
+    suggestEl.hidden = false;
+    nameInput.setAttribute("aria-expanded", "true");
+  }
 
   const rmInput = numberInput("Relative maturity", state.hybrid.rm, (v) => {
     inputStore.updateHybrid({ rm: v });
@@ -345,38 +434,74 @@ export function render(container) {
     paintResolved();
   }
 
-  const pickBtn = h(
+  // ---------------------------------------------------------------
+  // Mode toggle
+  // ---------------------------------------------------------------
+  // Two mutually exclusive ways to run this: with a hybrid, or without.
+  // A segmented control says that; two plain buttons said "here are two
+  // things you can do", which is a different and less true statement.
+  // Exactly one is always selected, so the card's state is never
+  // ambiguous.
+  const modeBtns = {};
+  let hybridMode = !inputStore.hasNoHybridInput() || !!String(state.hybrid.name || "").trim();
+
+  function paintMode() {
+    for (const [key, btn] of Object.entries(modeBtns)) {
+      const on = (key === "hybrid") === hybridMode;
+      btn.classList.toggle("gdu-mode-btn-active", on);
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+    }
+  }
+
+  function selectHybridMode() {
+    hybridMode = true;
+    paintMode();
+    setHybridCollapsed(false);
+    // Land the caret in the field they came here to fill.
+    setTimeout(() => nameInput.focus(), 0);
+  }
+
+  function selectGduOnlyMode() {
+    hybridMode = false;
+    inputStore.clearHybrid();
+    nameInput.value = "";
+    rmInput.input.value = "";
+    silkInput.input.value = "";
+    blInput.input.value = "";
+    closeSuggest();
+    paintMode();
+    setHybridCollapsed(true);
+    paintCatalogNote();
+    paintResolved();
+    // "GDU Only" is a decision, not a setting — so it runs. It still
+    // refuses when the two things a run actually needs are missing,
+    // rather than bouncing the user to a screen that can only say the
+    // same thing less clearly.
+    const s2 = inputStore.getState();
+    if (!s2.location) return showToast("Set a field location first — GPS or ZIP.", { type: "error" });
+    if (!s2.plantingIso) return showToast("Pick a planting date.", { type: "error" });
+    navigate("results");
+  }
+
+  modeBtns.hybrid = h(
     "button",
-    {
-      type: "button",
-      className: "btn btn-secondary gdu-pick-hybrid-btn",
-      disabled: true,
-      onclick: () =>
-        openHybridPicker({
-          value: inputStore.getState().hybrid.name,
-          onChange: (hy) => {
-            applyCatalogHybrid(hy);
-            showToast(`Loaded ${brandedHybridName(hy.variety, brand)} — ${hy.gduToSilk.toLocaleString()} silk / ${hy.gduToBlackLayer.toLocaleString()} black layer.`, {
-              type: "success",
-              duration: 3000,
-            });
-          },
-        }),
-    },
-    "Loading…"
+    { type: "button", className: "btn gdu-mode-btn gdu-pick-hybrid-btn", "aria-pressed": "false", onclick: selectHybridMode },
+    "Enter Hybrid"
   );
+  modeBtns.gduOnly = h(
+    "button",
+    { type: "button", className: "btn gdu-mode-btn gdu-clear-hybrid-btn", "aria-pressed": "false", onclick: selectGduOnlyMode },
+    "GDU Only"
+  );
+  const modeToggle = h("div", { className: "gdu-mode-toggle", role: "group", "aria-label": "Calculate with a hybrid, or GDUs only" }, [
+    modeBtns.hybrid,
+    modeBtns.gduOnly,
+  ]);
 
   // The catalog is a static JSON asset in the service worker precache, so
-  // after the first visit this resolves off disk and the button is
-  // enabled before anyone can look at it. On a cold first load it stays
-  // disabled for a beat rather than opening an empty picker.
+  // after the first visit this resolves off disk. Until it lands the
+  // field still accepts typing — the list is an accelerator, not a gate.
   catalog.ensureLoaded().then(() => {
-    if (catalog.isAvailable()) {
-      pickBtn.disabled = false;
-      pickBtn.textContent = "Choose Hybrid";
-    } else {
-      pickBtn.textContent = "List unavailable";
-    }
     paintCatalogNote();
   });
 
@@ -443,38 +568,18 @@ export function render(container) {
   paintSavedList();
   paintResolved();
 
-  // Everything below the header collapses to one line when there is no
-  // hybrid, so a ZIP-and-date run isn't scrolling past four empty boxes
-  // to reach Calculate. Collapsed is a VIEW state, not stored input —
-  // reopening it finds exactly what was there.
-  // Choose and Clear are a pair, so they sit together at the top of the
-  // card — the two things you do to the hybrid as a whole, before any of
-  // the individual fields below them.
-  const clearBtn = h(
-    "button",
-    {
-      type: "button",
-      className: "btn btn-secondary gdu-clear-hybrid-btn",
-      onclick: () => {
-        inputStore.clearHybrid();
-        nameInput.value = "";
-        rmInput.input.value = "";
-        silkInput.input.value = "";
-        blInput.input.value = "";
-        setHybridCollapsed(true);
-        paintCatalogNote();
-        paintResolved();
-        showToast("Hybrid cleared — this will calculate GDUs for the field and planting date only.", { type: "success", duration: 3500 });
-      },
-    },
-    "Clear Hybrid"
-  );
-
+  // The detail fields collapse to one line in GDU-only mode, so a
+  // ZIP-and-date run isn't scrolling past four empty boxes to reach
+  // Calculate. Collapsed is a VIEW state, not stored input — reopening
+  // it finds exactly what was there.
   const hybridBody = h("div", { className: "gdu-hybrid-body" }, [
-    h("div", { className: "gdu-inline-row gdu-hybrid-actions" }, [pickBtn, clearBtn]),
-    h("div", { className: "gdu-or-divider" }, "or enter it yourself"),
     h("div", { className: "field" }, [h("label", { className: "field-label" }, "Brand"), brandSelectEl]),
-    h("div", { className: "field" }, [h("label", { className: "field-label" }, "Hybrid"), nameInput]),
+    h("div", { className: "field gdu-hybrid-field" }, [
+      h("label", { className: "field-label" }, "Hybrid"),
+      nameInput,
+      suggestEl,
+      h("p", { className: "field-note" }, `Start typing to filter, or tap the box to scroll all ${FITTED_N}. Anything not on the list can be typed straight in.`),
+    ]),
     h("div", { className: "field" }, [
       h("label", { className: "field-label" }, "Relative Maturity (days)"),
       rmInput.input,
@@ -512,41 +617,34 @@ export function render(container) {
     savedListEl,
   ]);
 
-  const hybridToggle = h("button", {
-    type: "button",
-    className: "gdu-hybrid-toggle",
-    "aria-expanded": "true",
-    "aria-controls": "gdu-hybrid-body",
-    onclick: () => setHybridCollapsed(!hybridBody.hidden),
-  });
   hybridBody.id = "gdu-hybrid-body";
+  modeBtns.hybrid.setAttribute("aria-controls", "gdu-hybrid-body");
 
   const hybridEmptyNote = h(
     "p",
     { className: "field-note gdu-hybrid-empty" },
-    "No hybrid — Calculate will chart GDU accumulation for this field and planting date, with no silk or black layer dates."
+    "GDU only — Calculate will chart accumulation for this field and planting date, with no silk or black layer dates."
   );
 
+  // The separate Hide/Add chevron in the header bar is gone: the mode
+  // toggle IS the expander now, and two controls for one piece of state
+  // is how they end up disagreeing.
   function setHybridCollapsed(collapsed) {
     hybridBody.hidden = collapsed;
     hybridEmptyNote.hidden = !collapsed;
-    hybridToggle.textContent = collapsed ? "Add a hybrid" : "Hide";
-    hybridToggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    modeBtns.hybrid.setAttribute("aria-expanded", collapsed ? "false" : "true");
   }
 
-  // The toggle lives INSIDE the header bar, not in a flex row beside it.
-  // Wrapping the <h3> in a sibling div made the bar a flex item, so its
-  // negative-margin bleed only spanned its own width and the green
-  // stopped partway across the card while the button hung off the end.
-  // Every other card's header runs edge to edge; this one has to as well.
   const hybridCard = h("section", { className: "card" }, [
-    h("h3", { className: "section-header gdu-section-header-action" }, [h("span", {}, "Hybrid (optional)"), hybridToggle]),
+    h("h3", { className: "section-header" }, "Hybrid"),
+    modeToggle,
     hybridEmptyNote,
     hybridBody,
   ]);
 
-  // Open on arrival only when there is something to look at.
-  setHybridCollapsed(inputStore.hasNoHybridInput() && !String(state.hybrid.name || "").trim());
+  // Arrive in whichever mode the stored input implies.
+  paintMode();
+  setHybridCollapsed(!hybridMode);
 
   // ---------------------------------------------------------------
   // Go

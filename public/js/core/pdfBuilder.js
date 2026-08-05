@@ -46,6 +46,7 @@
 
 import { addDays, daysBetween, formatShort } from "./dates.js";
 import { sourceLabel, FITTED_N } from "./hybridEstimate.js";
+import { dayLimitKind } from "./gdu.js";
 
 const PAGE_W = 612;
 const PAGE_H = 792;
@@ -541,13 +542,10 @@ export function buildPdf({ jsPDF, season, hybrid, location, brand, logoDataUrl, 
         for (let i = 0; i <= lastObserved; i++) {
           const rec = season.index[addDays(season.plantingIso, i)];
           if (!rec || rec.source !== "observed") continue;
-          if (!Number.isFinite(rec.tmax) || !Number.isFinite(rec.tmin)) continue;
-          const hi = Math.max(rec.tmax, rec.tmin);
-          const lo = Math.min(rec.tmax, rec.tmin);
-          if (hi >= 86) limits.capped++;
-          else if (lo <= 50) limits.zero++;
-          else continue;
-          setStroke(overWhite(hi >= 86 ? LIMIT_CAPPED_RGB : LIMIT_ZERO_RGB, 0.4));
+          const kind = dayLimitKind(rec.tmax, rec.tmin);
+          if (!kind) continue;
+          limits[kind]++;
+          setStroke(overWhite(kind === "capped" ? LIMIT_CAPPED_RGB : LIMIT_ZERO_RGB, 0.4));
           doc.line(px(i), plot.y, px(i), plot.y + plot.h);
         }
         doc.setLineWidth(0.5);
@@ -610,7 +608,7 @@ export function buildPdf({ jsPDF, season, hybrid, location, brand, logoDataUrl, 
     if (limits.capped || limits.zero) {
       const parts = [];
       if (limits.capped) parts.push(`red = the ${limits.capped} day${limits.capped === 1 ? "" : "s"} the high hit 86 °F, where heat above the cap added nothing`);
-      if (limits.zero) parts.push(`blue = the ${limits.zero} day${limits.zero === 1 ? "" : "s"} the low fell to 50 °F or below, where that half counted zero`);
+      if (limits.zero) parts.push(`blue = the ${limits.zero} day${limits.zero === 1 ? "" : "s"} that never got above 50 °F, which earned no GDUs at all`);
       paragraph(`Vertical rules: ${parts.join("; ")}.`, { size: 7, gap: 3 });
     }
 
