@@ -1,4 +1,4 @@
-# GDU Calculator v2.5 (Beta)
+# GDU Calculator v2.5.1 (Beta)
 
 A hybrid GDU calculator for corn: set a field location, a planting date, and a
 hybrid (133 built in, or type your own numbers — any one of GDUs to silk, GDUs to
@@ -152,7 +152,7 @@ npm run shots             # e2e plus screenshots into test/shots/
 * `test/unit_gdu.mjs` — 84 checks on the GDU math, the shipped hybrid catalog, the
   stage ladder and the rating estimator, all hand-worked from the formulas rather
   than snapshotted from a previous run.
-* `test/e2e_smoke.mjs` — 105 checks driving the real UI in headless Chromium with
+* `test/e2e_smoke.mjs` — 106 checks driving the real UI in headless Chromium with
   every weather/geocode call intercepted and served deterministic synthetic data.
 
 ## How it works

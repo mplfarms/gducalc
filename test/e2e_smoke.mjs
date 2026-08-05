@@ -295,7 +295,22 @@ async function main() {
   // ---- built-in hybrid list ------------------------------------------
   await page.waitForSelector(".gdu-pick-hybrid-btn:not([disabled])", { timeout: 10000 });
   const pickLabel = await page.locator(".gdu-pick-hybrid-btn").textContent();
-  check("the hybrid list loads and reports its size", () => assert.match(pickLabel, /Choose from Hybrid List \(133\)/));
+  check("the hybrid list button says just Choose Hybrid", () => assert.equal(pickLabel.trim(), "Choose Hybrid"));
+  // The button no longer carries the catalog count, so the row count in
+  // the picker below is the only remaining proof that the whole list
+  // loaded rather than a truncated one.
+  const actionRow = await page.evaluate(() => {
+    const pick = document.querySelector(".gdu-pick-hybrid-btn");
+    const clear = document.querySelector(".gdu-clear-hybrid-btn");
+    const r = (el) => { const b = el.getBoundingClientRect(); return { t: Math.round(b.top), w: Math.round(b.width), h: Math.round(b.height) }; };
+    return { pick: r(pick), clear: r(clear), sameRow: pick.parentElement === clear.parentElement };
+  });
+  check("Choose Hybrid and Clear Hybrid sit side by side at the top", () => {
+    assert.equal(actionRow.sameRow, true, "should share a row");
+    assert.equal(actionRow.pick.t, actionRow.clear.t, "should be vertically aligned");
+    assert.ok(Math.abs(actionRow.pick.w - actionRow.clear.w) <= 1, "should be equal halves");
+    assert.ok(actionRow.pick.h >= 44 && actionRow.clear.h >= 44, "both need a 44px target");
+  });
 
   await page.locator(".gdu-pick-hybrid-btn").click();
   await page.waitForSelector(".hybrid-picker-option");

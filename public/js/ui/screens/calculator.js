@@ -349,7 +349,7 @@ export function render(container) {
     "button",
     {
       type: "button",
-      className: "btn btn-secondary btn-block gdu-pick-hybrid-btn",
+      className: "btn btn-secondary gdu-pick-hybrid-btn",
       disabled: true,
       onclick: () =>
         openHybridPicker({
@@ -363,7 +363,7 @@ export function render(container) {
           },
         }),
     },
-    "Loading hybrid list…"
+    "Loading…"
   );
 
   // The catalog is a static JSON asset in the service worker precache, so
@@ -373,9 +373,9 @@ export function render(container) {
   catalog.ensureLoaded().then(() => {
     if (catalog.isAvailable()) {
       pickBtn.disabled = false;
-      pickBtn.textContent = `Choose from Hybrid List (${catalog.getAll().length})`;
+      pickBtn.textContent = "Choose Hybrid";
     } else {
-      pickBtn.textContent = "Hybrid list unavailable — enter numbers below";
+      pickBtn.textContent = "List unavailable";
     }
     paintCatalogNote();
   });
@@ -447,8 +447,31 @@ export function render(container) {
   // hybrid, so a ZIP-and-date run isn't scrolling past four empty boxes
   // to reach Calculate. Collapsed is a VIEW state, not stored input —
   // reopening it finds exactly what was there.
+  // Choose and Clear are a pair, so they sit together at the top of the
+  // card — the two things you do to the hybrid as a whole, before any of
+  // the individual fields below them.
+  const clearBtn = h(
+    "button",
+    {
+      type: "button",
+      className: "btn btn-secondary gdu-clear-hybrid-btn",
+      onclick: () => {
+        inputStore.clearHybrid();
+        nameInput.value = "";
+        rmInput.input.value = "";
+        silkInput.input.value = "";
+        blInput.input.value = "";
+        setHybridCollapsed(true);
+        paintCatalogNote();
+        paintResolved();
+        showToast("Hybrid cleared — this will calculate GDUs for the field and planting date only.", { type: "success", duration: 3500 });
+      },
+    },
+    "Clear Hybrid"
+  );
+
   const hybridBody = h("div", { className: "gdu-hybrid-body" }, [
-    pickBtn,
+    h("div", { className: "gdu-inline-row gdu-hybrid-actions" }, [pickBtn, clearBtn]),
     h("div", { className: "gdu-or-divider" }, "or enter it yourself"),
     h("div", { className: "field" }, [h("label", { className: "field-label" }, "Brand"), brandSelectEl]),
     h("div", { className: "field" }, [h("label", { className: "field-label" }, "Hybrid"), nameInput]),
@@ -468,48 +491,23 @@ export function render(container) {
       { className: "field-note" },
       "Anything not on the built-in list can be typed in directly — use the numbers off that brand's own tech sheet where you have them. A real GDU rating always beats an estimate, and one real rating beats RM: the app estimates a missing black layer from a known silk before it will fall back to maturity."
     ),
-    h("div", { className: "gdu-inline-row gdu-hybrid-actions" }, [
-      h(
-        "button",
-        {
-          type: "button",
-          className: "btn btn-secondary gdu-save-hybrid-btn",
-          onclick: () => {
-            const res = inputStore.saveCurrentHybrid();
-            if (!res.ok) {
-              showToast(res.error, { type: "error" });
-              return;
-            }
-            paintSavedList();
-            showToast("Hybrid saved.", { type: "success", duration: 2500 });
-          },
+    h(
+      "button",
+      {
+        type: "button",
+        className: "btn btn-secondary btn-block gdu-save-hybrid-btn",
+        onclick: () => {
+          const res = inputStore.saveCurrentHybrid();
+          if (!res.ok) {
+            showToast(res.error, { type: "error" });
+            return;
+          }
+          paintSavedList();
+          showToast("Hybrid saved.", { type: "success", duration: 2500 });
         },
-        "Save This Hybrid"
-      ),
-      // Empties every hybrid box and folds the section shut, leaving a
-      // plain location-and-planting-date run. Nothing else is touched:
-      // the saved list, the field and the planting date all stay, because
-      // "drop the hybrid" is not "start over".
-      h(
-        "button",
-        {
-          type: "button",
-          className: "btn btn-secondary gdu-clear-hybrid-btn",
-          onclick: () => {
-            inputStore.clearHybrid();
-            nameInput.value = "";
-            rmInput.input.value = "";
-            silkInput.input.value = "";
-            blInput.input.value = "";
-            setHybridCollapsed(true);
-            paintCatalogNote();
-            paintResolved();
-            showToast("Hybrid cleared — this will calculate GDUs for the field and planting date only.", { type: "success", duration: 3500 });
-          },
-        },
-        "Clear Hybrid"
-      ),
-    ]),
+      },
+      "Save This Hybrid"
+    ),
     h("h4", { className: "gdu-subheading" }, "Saved Hybrids"),
     savedListEl,
   ]);

@@ -1147,10 +1147,13 @@ select.text-input {
   margin-top: 4px;
 }
 
-/* Save and Clear share a row; each stays a full 44px touch target. */
+/* Choose and Clear share a row; each stays a full 44px touch target and
+   an equal half so neither reads as the primary action. min-width:0 lets
+   them shrink rather than overflow on a 320px screen. */
 .gdu-hybrid-actions .btn {
-  flex: 1;
-  margin-top: 4px;
+  flex: 1 1 0;
+  min-width: 0;
+  margin-top: 0;
 }
 
 /* ---------- collapsible result cards ---------- */
