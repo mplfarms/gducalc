@@ -160,6 +160,8 @@ export function render(container) {
       "aria-label": "Brand",
       onchange: (e) => {
         inputStore.updateHybrid({ brand: e.target.value });
+        paintHybridField();
+        closeSuggest();
         paintCatalogNote();
         paintResolved();
       },
@@ -167,7 +169,7 @@ export function render(container) {
     [
       h("option", { value: "" }, "— Select brand —"),
       ...houseBrands.map((b) => h("option", { value: b.catalogBrandName }, b.catalogBrandName)),
-      h("option", { value: "Other" }, "Other / competitor"),
+      h("option", { value: "Other" }, "Other"),
     ]
   );
   // Default the brand field to the active Brand View — it's right far
@@ -242,6 +244,10 @@ export function render(container) {
   function closeSuggest() {
     suggestOpen = false;
     activeIdx = -1;
+    // Emptied, not just hidden: 133 stale rows left in the DOM outlive
+    // the reason they were built, and the next open rebuilds them from
+    // the current query anyway.
+    suggestEl.textContent = "";
     suggestEl.hidden = true;
     nameInput.setAttribute("aria-expanded", "false");
   }
@@ -255,8 +261,33 @@ export function render(container) {
     rows[activeIdx].scrollIntoView({ block: "nearest" });
   }
 
+  // Placeholder and helper text both follow the Brand field: under
+  // "Other" there is no list to filter and no house variety worth
+  // showing as an example, and saying otherwise would be an instruction
+  // that doesn't work.
+  const hybridFieldNote = h("p", { className: "field-note" }, "");
+
+  function paintHybridField() {
+    if (isOtherBrand()) {
+      nameInput.placeholder = "e.g. DKC62-08";
+      hybridFieldNote.textContent = "Not one of ours, so there's no list to pick from — type the variety, then its GDU numbers off that brand's tech sheet.";
+    } else {
+      nameInput.placeholder = `e.g. ${brandedHybridName("09-90 PCE", brand)}`;
+      hybridFieldNote.textContent = `Start typing to filter, or tap the box to scroll all ${FITTED_N}. Anything not on the list can be typed straight in.`;
+    }
+  }
+
+  /** True when the Brand field is set to something other than our own. */
+  function isOtherBrand() {
+    return brandSelectEl.value === "Other";
+  }
+
   function openSuggest(query) {
-    if (!catalog.isAvailable()) return;
+    // The built-in list is OUR genetics. Offering it under "Other" would
+    // suggest a competitor hybrid can be looked up in it, and a rep who
+    // picked one from the list would silently end up with our numbers
+    // filed under somebody else's name.
+    if (!catalog.isAvailable() || isOtherBrand()) return closeSuggest();
     // A name typed in full already matches its own row; showing a
     // one-item list over it is noise, so an exact hit closes instead.
     const matches = catalog.findByVariety(query) ? [] : catalog.search(query);
@@ -578,7 +609,7 @@ export function render(container) {
       h("label", { className: "field-label" }, "Hybrid"),
       nameInput,
       suggestEl,
-      h("p", { className: "field-note" }, `Start typing to filter, or tap the box to scroll all ${FITTED_N}. Anything not on the list can be typed straight in.`),
+      hybridFieldNote,
     ]),
     h("div", { className: "field" }, [
       h("label", { className: "field-label" }, "Relative Maturity (days)"),
@@ -643,6 +674,7 @@ export function render(container) {
   ]);
 
   // Arrive in whichever mode the stored input implies.
+  paintHybridField();
   paintMode();
   setHybridCollapsed(!hybridMode);
 

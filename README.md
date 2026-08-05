@@ -1,4 +1,4 @@
-# GDU Calculator v3.0 (Beta)
+# GDU Calculator v3.0.1 (Beta)
 
 A hybrid GDU calculator for corn: set a field location, a planting date, and a
 hybrid (133 built in, or type your own numbers — any one of GDUs to silk, GDUs to
@@ -171,7 +171,7 @@ npm run shots             # e2e plus screenshots into test/shots/
 * `test/unit_gdu.mjs` — 92 checks on the GDU math, the shipped hybrid catalog, the
   stage ladder and the rating estimator, all hand-worked from the formulas rather
   than snapshotted from a previous run.
-* `test/e2e_smoke.mjs` — 123 checks driving the real UI in headless Chromium with
+* `test/e2e_smoke.mjs` — 126 checks driving the real UI in headless Chromium with
   every weather/geocode call intercepted and served deterministic synthetic data.
 
 ## How it works
@@ -357,6 +357,13 @@ regional labels. Two consequences, both visible in the app:
   Switching views *migrates* a stored house brand rather than leaving a value
   the dropdown no longer offers; "Other" is left alone, since a competitor
   hybrid doesn't become ours because the view changed.
+* **Selecting "Other" suppresses the built-in list entirely.** It is our
+  genetics; offering it under a competitor's name would imply their hybrid can
+  be looked up in it, and a rep who picked a row would end up with our numbers
+  filed under somebody else's variety. The placeholder and the helper text
+  switch too — an example reading `NC 09-90 PCE` and an instruction to "scroll
+  all 133" are both wrong once there is no list. Typing still works: Other is a
+  real path, not a dead end.
 * **Hybrids are named with the view's own 2-letter code** — `NC 09-90 PCE`
   under NC+, `MW 09-90 PCE` under Midwest — everywhere: the input box, the
   picker, the results header, the PDF and its filename. `brandedHybridName()`

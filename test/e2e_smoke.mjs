@@ -269,9 +269,14 @@ async function main() {
 
   await page.getByRole("button", { name: "Enter Hybrid" }).click();
   await page.waitForFunction(() => document.querySelector(".gdu-hybrid-body").hidden === false);
+  // The focus lands in a setTimeout, so sample it when it arrives rather
+  // than racing it.
+  await page
+    .waitForFunction(() => document.activeElement && document.activeElement.getAttribute("aria-label") === "Hybrid name", { timeout: 3000 })
+    .catch(() => {});
   const afterEnter = await page.evaluate(() => ({
     pressed: [...document.querySelectorAll(".gdu-mode-btn")].map((b) => b.getAttribute("aria-pressed")),
-    focused: document.activeElement.getAttribute("aria-label"),
+    focused: document.activeElement ? document.activeElement.getAttribute("aria-label") : null,
   }));
   check("Enter Hybrid expands the detail and selects itself", () => {
     assert.deepEqual(afterEnter.pressed, ["true", "false"]);
@@ -305,13 +310,53 @@ async function main() {
   // offering all three inside one Brand View let a rep build a report
   // headed with a brand they were not actually in.
   const brandOpts = await page.locator('select[aria-label="Brand"] option').allTextContents();
-  check("only the active house brand is offered, plus competitor", () => {
-    assert.deepEqual(brandOpts, ["— Select brand —", "NC+ Hybrids", "Other / competitor"]);
+  check("only the active house brand is offered, plus Other", () => {
+    assert.deepEqual(brandOpts, ["— Select brand —", "NC+ Hybrids", "Other"]);
   });
   const brandVal = await page.inputValue('select[aria-label="Brand"]');
   check("the brand defaults to the active Brand View", () => assert.equal(brandVal, "NC+ Hybrids"));
   const namePlaceholder = await page.getAttribute('input[aria-label="Hybrid name"]', "placeholder");
   check("the hybrid placeholder carries the Brand View's code", () => assert.equal(namePlaceholder, "e.g. NC 09-90 PCE"));
+
+  // ---- "Other" suppresses the built-in list ---------------------------
+  // The list is OUR genetics. Offering it under Other would suggest a
+  // competitor hybrid can be looked up in it, and a rep who picked from
+  // the list would end up with our numbers under somebody else's name.
+  await page.selectOption('select[aria-label="Brand"]', "Other");
+  await page.click('input[aria-label="Hybrid name"]');
+  await page.waitForTimeout(150);
+  const underOther = await page.evaluate(() => ({
+    rows: document.querySelectorAll(".gdu-suggest-option").length,
+    hidden: document.querySelector(".gdu-suggest").hidden,
+    expanded: document.querySelector('input[aria-label="Hybrid name"]').getAttribute("aria-expanded"),
+    placeholder: document.querySelector('input[aria-label="Hybrid name"]').placeholder,
+    note: document.querySelector(".gdu-hybrid-field .field-note").textContent,
+  }));
+  check("no list drops down when the brand is Other", () => {
+    assert.equal(underOther.rows, 0);
+    assert.equal(underOther.hidden, true);
+    assert.equal(underOther.expanded, "false");
+  });
+  check("the example and the helper text stop pointing at our own list", () => {
+    assert.ok(!/NC /.test(underOther.placeholder), `placeholder still ours: ${underOther.placeholder}`);
+    assert.match(underOther.note, /no list to pick from/i);
+  });
+  // Typing must still be accepted — Other is a real path, not a dead end.
+  await page.fill('input[aria-label="Hybrid name"]', "DKC62-08");
+  await page.waitForTimeout(150);
+  const typedUnderOther = await page.evaluate(() => ({
+    rows: document.querySelectorAll(".gdu-suggest-option").length,
+    stored: JSON.parse(localStorage.getItem("gdu.currentHybrid") || "{}").name,
+  }));
+  check("a competitor hybrid can still be typed straight in", () => {
+    assert.equal(typedUnderOther.rows, 0);
+    assert.equal(typedUnderOther.stored, "DKC62-08");
+  });
+
+  // Back to the house brand for everything below.
+  await page.selectOption('select[aria-label="Brand"]', "NC+ Hybrids");
+  await page.fill('input[aria-label="Hybrid name"]', "");
+  await page.waitForTimeout(100);
 
   // ---- built-in hybrid list, inline on the field ----------------------
   // The modal picker is gone. Focus the box and the whole list drops
