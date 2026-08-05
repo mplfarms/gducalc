@@ -203,8 +203,44 @@ async function main() {
   // ZIP-and-date run doesn't scroll past four empty boxes.
   const collapsedAtStart = await page.locator(".gdu-hybrid-body").isHidden();
   check("the hybrid card starts collapsed when empty", () => assert.equal(collapsedAtStart, true));
+  // The header bar has to run edge to edge like every other card's, and
+  // sit at the same height as the one above it. It regressed once by
+  // being wrapped in a flex row, which cut the green off mid-card.
+  const headerGeom = await page.evaluate(() => {
+    const cards = [...document.querySelectorAll(".card")];
+    const hybridCard = cards.find((c) => /Hybrid \(optional\)/.test(c.textContent));
+    const dateCard = cards.find((c) => /Planting Date/.test(c.textContent));
+    const r = (el) => { const b = el.getBoundingClientRect(); return { l: Math.round(b.left), w: Math.round(b.width), h: Math.round(b.height) }; };
+    return {
+      hybridHeader: r(hybridCard.querySelector(".section-header")),
+      hybridCard: r(hybridCard),
+      dateHeader: r(dateCard.querySelector(".section-header")),
+      dateCard: r(dateCard),
+    };
+  });
+  check("the Hybrid header bar spans the whole card like every other one", () => {
+    // Measured against the Planting Date card directly above it rather
+    // than against the card box, since .section-header bleeds to the
+    // card's CONTENT edge (inside its border), not its outer edge.
+    assert.equal(headerGeom.hybridHeader.w, headerGeom.dateHeader.w, "width should match the Planting Date header");
+    assert.equal(headerGeom.hybridHeader.l - headerGeom.hybridCard.l, headerGeom.dateHeader.l - headerGeom.dateCard.l, "left inset should match");
+  });
+  check("the toggle does not make the header taller than a plain one", () => {
+    const diff = Math.abs(headerGeom.hybridHeader.h - headerGeom.dateHeader.h);
+    assert.ok(diff <= 2, `header heights differ by ${diff}px (${headerGeom.hybridHeader.h} vs ${headerGeom.dateHeader.h})`);
+  });
+  const toggleTap = await page.evaluate(() => {
+    const el = document.querySelector(".gdu-hybrid-toggle");
+    const after = getComputedStyle(el, "::after");
+    return { visible: Math.round(el.getBoundingClientRect().height), tap: parseInt(after.height, 10) };
+  });
+  check("the toggle keeps a full 44px tap target despite the compact chip", () => {
+    assert.ok(toggleTap.tap >= 44, `tap area only ${toggleTap.tap}px`);
+  });
+
   const emptyNote = await page.locator(".gdu-hybrid-empty").textContent();
   check("the collapsed card says what Calculate will do without a hybrid", () => assert.match(emptyNote, /no silk or black layer dates/i));
+  if (SHOTS) await page.screenshot({ path: path.join(SHOT_DIR, "16-hybrid-collapsed.png"), fullPage: true });
   await page.locator(".gdu-hybrid-toggle").click();
   await page.waitForSelector(".gdu-hybrid-body:not([hidden])");
 

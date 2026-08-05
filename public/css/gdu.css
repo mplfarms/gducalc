@@ -1085,32 +1085,45 @@ select.text-input {
 
 /* ---------- collapsible hybrid card ---------- */
 
-.gdu-card-head {
+/* The show/hide control sits in the header bar itself, so the bar keeps
+   the full-width edge-to-edge bleed every other card header has. */
+.gdu-section-header-action {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
 }
 
-/* The header bar normally spans the card; inside the flex row it has to
-   stop growing so the toggle has somewhere to sit. */
-.gdu-section-header-inline {
-  flex: 1;
-  min-width: 0;
+/* Negative vertical margin keeps the chip from inflating the header bar
+   past the height of a plain one — "Hybrid (optional)" has to line up
+   with "Planting Date" directly above it. */
+.gdu-hybrid-toggle {
+  position: relative;
+  flex-shrink: 0;
+  margin: -6px 0;
+  min-height: 30px;
+  padding: 0 13px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  background: rgba(255, 255, 255, 0.14);
+  color: #ffffff;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
 }
 
-.gdu-hybrid-toggle {
-  flex-shrink: 0;
-  background: none;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 0 14px;
-  min-height: 44px;
-  font: inherit;
-  font-size: 0.86rem;
-  font-weight: 600;
-  color: var(--accent-strong);
-  cursor: pointer;
+/* The visible chip is deliberately short; the tap target is not. This
+   pseudo-element takes the hit area back to 44px without changing a
+   single pixel of layout. */
+.gdu-hybrid-toggle::after {
+  content: "";
+  position: absolute;
+  left: -4px;
+  right: -4px;
+  top: 50%;
+  height: 44px;
+  transform: translateY(-50%);
 }
 
 .gdu-hybrid-empty {

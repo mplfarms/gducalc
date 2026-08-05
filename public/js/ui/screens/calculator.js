@@ -536,8 +536,13 @@ export function render(container) {
     hybridToggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
   }
 
+  // The toggle lives INSIDE the header bar, not in a flex row beside it.
+  // Wrapping the <h3> in a sibling div made the bar a flex item, so its
+  // negative-margin bleed only spanned its own width and the green
+  // stopped partway across the card while the button hung off the end.
+  // Every other card's header runs edge to edge; this one has to as well.
   const hybridCard = h("section", { className: "card" }, [
-    h("div", { className: "gdu-card-head" }, [h("h3", { className: "section-header gdu-section-header-inline" }, "Hybrid (optional)"), hybridToggle]),
+    h("h3", { className: "section-header gdu-section-header-action" }, [h("span", {}, "Hybrid (optional)"), hybridToggle]),
     hybridEmptyNote,
     hybridBody,
   ]);

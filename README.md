@@ -1,4 +1,4 @@
-# GDU Calculator v2.4 (Beta)
+# GDU Calculator v2.4.1 (Beta)
 
 A hybrid GDU calculator for corn: set a field location, a planting date, and a
 hybrid (133 built in, or type your own numbers — any one of GDUs to silk, GDUs to
@@ -6,8 +6,13 @@ black layer, or a relative maturity is enough), and get predicted stage dates fo
 this season plus last year, a normal year, an abnormally hot year, and an
 abnormally cool year — with a frost-risk check on the end.
 
-**The hybrid is optional.** The Hybrid card arrives collapsed when empty, and a
-**Clear Hybrid** button empties every box and folds it shut again — leaving the
+**The hybrid is optional.** The Hybrid card arrives collapsed when empty — its
+show/hide control sits *inside* the header bar rather than beside it, so the bar
+keeps the edge-to-edge bleed every other card header has (wrapping the `<h3>` in
+a flex row made it a flex item, and the green stopped partway across the card).
+Three e2e checks pin the bar's width, its height against the Planting Date card
+above it, and the toggle's 44px tap target. A **Clear Hybrid** button empties
+every box and folds it shut again — leaving the
 field and the planting date untouched, because dropping the hybrid is not
 starting over. A ZIP code and a planting date alone produce the
 accumulation chart, the percentile band and the frost dates — the heat itself,
@@ -116,7 +121,7 @@ npm run shots             # e2e plus screenshots into test/shots/
 * `test/unit_gdu.mjs` — 84 checks on the GDU math, the shipped hybrid catalog, the
   stage ladder and the rating estimator, all hand-worked from the formulas rather
   than snapshotted from a previous run.
-* `test/e2e_smoke.mjs` — 93 checks driving the real UI in headless Chromium with
+* `test/e2e_smoke.mjs` — 96 checks driving the real UI in headless Chromium with
   every weather/geocode call intercepted and served deterministic synthetic data.
 
 ## How it works
