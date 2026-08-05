@@ -14,7 +14,7 @@ import { createTopBar } from "../components/topBar.js";
 import { createDatePicker } from "../components/datePicker.js";
 import { showToast } from "../components/toast.js";
 import { showConfirm } from "../components/modal.js";
-import { BRANDS, getBrand } from "../brand.js";
+import { BRANDS, getBrand, brandedHybridName } from "../brand.js";
 import * as brandStore from "../stores/brandStore.js";
 import * as inputStore from "../stores/inputStore.js";
 import { navigate } from "../router.js";
@@ -147,28 +147,52 @@ export function render(container) {
   // ---------------------------------------------------------------
   // Hybrid
   // ---------------------------------------------------------------
+  // Only ONE house brand is offered: the Brand View you are currently in.
+  // Midwest, NC+ and Crow's are the same genetics under three regional
+  // labels, so listing all three inside a single Brand View invited a rep
+  // to build a report headed "Crow's" while sitting in the NC+ view. The
+  // choice that remains is the one that is actually a choice — our
+  // hybrid, or somebody else's.
+  const houseBrands = brand ? [brand] : Object.values(BRANDS);
   const brandSelectEl = h(
     "select",
     {
       className: "text-input",
       "aria-label": "Brand",
-      onchange: (e) => inputStore.updateHybrid({ brand: e.target.value }),
+      onchange: (e) => {
+        inputStore.updateHybrid({ brand: e.target.value });
+        paintCatalogNote();
+        paintResolved();
+      },
     },
     [
       h("option", { value: "" }, "— Select brand —"),
-      ...Object.values(BRANDS).map((b) => h("option", { value: b.catalogBrandName }, b.catalogBrandName)),
+      ...houseBrands.map((b) => h("option", { value: b.catalogBrandName }, b.catalogBrandName)),
       h("option", { value: "Other" }, "Other / competitor"),
     ]
   );
   // Default the brand field to the active Brand View — it's right far
   // more often than not, and it's one less tap.
-  brandSelectEl.value = state.hybrid.brand || (brand ? brand.catalogBrandName : "");
-  if (brandSelectEl.value !== (state.hybrid.brand || "")) inputStore.updateHybrid({ brand: brandSelectEl.value });
+  //
+  // Switching Brand View also MIGRATES a stored house brand to the new
+  // one rather than leaving a value the dropdown no longer offers (which
+  // renders as a blank select and silently drops the brand off the
+  // report). "Other" is left alone — a competitor hybrid does not become
+  // ours because the view changed.
+  const storedBrand = String(state.hybrid.brand || "");
+  const isStoredHouse = storedBrand !== "" && storedBrand !== "Other" && !houseBrands.some((b) => b.catalogBrandName === storedBrand);
+  const wantBrand = isStoredHouse || storedBrand === "" ? (brand ? brand.catalogBrandName : storedBrand) : storedBrand;
+  brandSelectEl.value = wantBrand;
+  if (wantBrand !== storedBrand) inputStore.updateHybrid({ brand: wantBrand });
 
   const nameInput = h("input", {
     className: "text-input",
     type: "text",
-    placeholder: "e.g. 09-90 PCE",
+    // The visible <label> isn't wired up with for/id, so screen readers
+    // (and tests) had nothing stable to key on while the placeholder
+    // moves with the Brand View.
+    "aria-label": "Hybrid name",
+    placeholder: `e.g. ${brandedHybridName("09-90 PCE", brand)}`,
     value: state.hybrid.name || "",
     oninput: (e) => {
       inputStore.updateHybrid({ name: e.target.value });
@@ -306,8 +330,14 @@ export function render(container) {
   }
 
   function applyCatalogHybrid(hy) {
-    inputStore.updateHybrid({ name: hy.variety, gduToSilk: hy.gduToSilk, gduToBlackLayer: hy.gduToBlackLayer, rm: hy.rm });
-    nameInput.value = hy.variety;
+    // Stored and displayed under the active Brand View's code. The list
+    // itself is brand-neutral ("09-90 PCE") because it is one set of
+    // genetics; the code is how the grower in front of you buys it.
+    // catalog.findByVariety() strips the code again on the way back, so
+    // the "From hybrid list" badge still matches.
+    const shown = brandedHybridName(hy.variety, brand);
+    inputStore.updateHybrid({ name: shown, gduToSilk: hy.gduToSilk, gduToBlackLayer: hy.gduToBlackLayer, rm: hy.rm });
+    nameInput.value = shown;
     rmInput.input.value = String(hy.rm);
     silkInput.input.value = String(hy.gduToSilk);
     blInput.input.value = String(hy.gduToBlackLayer);
@@ -326,7 +356,10 @@ export function render(container) {
           value: inputStore.getState().hybrid.name,
           onChange: (hy) => {
             applyCatalogHybrid(hy);
-            showToast(`Loaded ${hy.variety} — ${hy.gduToSilk.toLocaleString()} silk / ${hy.gduToBlackLayer.toLocaleString()} black layer.`, { type: "success", duration: 3000 });
+            showToast(`Loaded ${brandedHybridName(hy.variety, brand)} — ${hy.gduToSilk.toLocaleString()} silk / ${hy.gduToBlackLayer.toLocaleString()} black layer.`, {
+              type: "success",
+              duration: 3000,
+            });
           },
         }),
     },
@@ -410,8 +443,11 @@ export function render(container) {
   paintSavedList();
   paintResolved();
 
-  const hybridCard = h("section", { className: "card" }, [
-    h("h3", { className: "section-header" }, "Hybrid (optional)"),
+  // Everything below the header collapses to one line when there is no
+  // hybrid, so a ZIP-and-date run isn't scrolling past four empty boxes
+  // to reach Calculate. Collapsed is a VIEW state, not stored input —
+  // reopening it finds exactly what was there.
+  const hybridBody = h("div", { className: "gdu-hybrid-body" }, [
     pickBtn,
     h("div", { className: "gdu-or-divider" }, "or enter it yourself"),
     h("div", { className: "field" }, [h("label", { className: "field-label" }, "Brand"), brandSelectEl]),
@@ -432,26 +468,82 @@ export function render(container) {
       { className: "field-note" },
       "Anything not on the built-in list can be typed in directly — use the numbers off that brand's own tech sheet where you have them. A real GDU rating always beats an estimate, and one real rating beats RM: the app estimates a missing black layer from a known silk before it will fall back to maturity."
     ),
-    h(
-      "button",
-      {
-        type: "button",
-        className: "btn btn-secondary btn-block gdu-save-hybrid-btn",
-        onclick: () => {
-          const res = inputStore.saveCurrentHybrid();
-          if (!res.ok) {
-            showToast(res.error, { type: "error" });
-            return;
-          }
-          paintSavedList();
-          showToast("Hybrid saved.", { type: "success", duration: 2500 });
+    h("div", { className: "gdu-inline-row gdu-hybrid-actions" }, [
+      h(
+        "button",
+        {
+          type: "button",
+          className: "btn btn-secondary gdu-save-hybrid-btn",
+          onclick: () => {
+            const res = inputStore.saveCurrentHybrid();
+            if (!res.ok) {
+              showToast(res.error, { type: "error" });
+              return;
+            }
+            paintSavedList();
+            showToast("Hybrid saved.", { type: "success", duration: 2500 });
+          },
         },
-      },
-      "Save This Hybrid"
-    ),
+        "Save This Hybrid"
+      ),
+      // Empties every hybrid box and folds the section shut, leaving a
+      // plain location-and-planting-date run. Nothing else is touched:
+      // the saved list, the field and the planting date all stay, because
+      // "drop the hybrid" is not "start over".
+      h(
+        "button",
+        {
+          type: "button",
+          className: "btn btn-secondary gdu-clear-hybrid-btn",
+          onclick: () => {
+            inputStore.clearHybrid();
+            nameInput.value = "";
+            rmInput.input.value = "";
+            silkInput.input.value = "";
+            blInput.input.value = "";
+            setHybridCollapsed(true);
+            paintCatalogNote();
+            paintResolved();
+            showToast("Hybrid cleared — this will calculate GDUs for the field and planting date only.", { type: "success", duration: 3500 });
+          },
+        },
+        "Clear Hybrid"
+      ),
+    ]),
     h("h4", { className: "gdu-subheading" }, "Saved Hybrids"),
     savedListEl,
   ]);
+
+  const hybridToggle = h("button", {
+    type: "button",
+    className: "gdu-hybrid-toggle",
+    "aria-expanded": "true",
+    "aria-controls": "gdu-hybrid-body",
+    onclick: () => setHybridCollapsed(!hybridBody.hidden),
+  });
+  hybridBody.id = "gdu-hybrid-body";
+
+  const hybridEmptyNote = h(
+    "p",
+    { className: "field-note gdu-hybrid-empty" },
+    "No hybrid — Calculate will chart GDU accumulation for this field and planting date, with no silk or black layer dates."
+  );
+
+  function setHybridCollapsed(collapsed) {
+    hybridBody.hidden = collapsed;
+    hybridEmptyNote.hidden = !collapsed;
+    hybridToggle.textContent = collapsed ? "Add a hybrid" : "Hide";
+    hybridToggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+  }
+
+  const hybridCard = h("section", { className: "card" }, [
+    h("div", { className: "gdu-card-head" }, [h("h3", { className: "section-header gdu-section-header-inline" }, "Hybrid (optional)"), hybridToggle]),
+    hybridEmptyNote,
+    hybridBody,
+  ]);
+
+  // Open on arrival only when there is something to look at.
+  setHybridCollapsed(inputStore.hasNoHybridInput() && !String(state.hybrid.name || "").trim());
 
   // ---------------------------------------------------------------
   // Go

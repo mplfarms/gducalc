@@ -169,13 +169,21 @@ function build(width, { stages, gduToDate, asOfIso }) {
 
     if (bandH < 13) continue; // no room for a label; the Data tab has it
     const dateText = from.iso ? ` (~ ${formatShort(from.iso, { withYear: true })})` : " (not reached)";
+    // Average high/low for the stretch the crop spent in this stage.
+    // Appended to the existing line rather than given one of its own —
+    // the thinnest bands here are barely tall enough for a single line,
+    // and a second line would drop out of exactly the bands a rep is
+    // most likely to be squinting at. Present only when every day in the
+    // span was observed, so a band still in the forecast simply has
+    // nothing after the date, which is the intended reading.
+    const tempText = from.bandTemps ? ` · ${Math.round(from.bandTemps.avgHigh)}°/${Math.round(from.bandTemps.avgLow)}°` : "";
     const label = svg("text", {
       class: `gdu-stage-band-label${from.anchored ? " gdu-stage-band-label-anchored" : ""}`,
       x: margin.left + plotW / 2,
       y: bottom - bandH / 2 + 4,
       "text-anchor": "middle",
     });
-    label.textContent = `${from.label}${dateText}`;
+    label.textContent = `${from.label}${dateText}${tempText}`;
     root.appendChild(label);
     if (from.projected && bandH >= 26) {
       const sub = svg("text", { class: "gdu-stage-band-sub", x: margin.left + plotW / 2, y: bottom - bandH / 2 + 17, "text-anchor": "middle" });

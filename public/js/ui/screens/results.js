@@ -24,7 +24,7 @@ import * as inputStore from "../stores/inputStore.js";
 import * as brandStore from "../stores/brandStore.js";
 import { getBrand } from "../brand.js";
 import { loadTemperatureData, toSeries } from "../../core/weather.js";
-import { buildDailyIndex, offsetAtTarget } from "../../core/gdu.js";
+import { buildDailyIndex, offsetAtTarget, bandMeanTemps } from "../../core/gdu.js";
 import { buildSeason, baselineYearsFor, BASELINE_YEARS } from "../../core/season.js";
 import { addDays, daysBetween, formatShort, yearOf } from "../../core/dates.js";
 import { renderGduChart, buildChartLegend } from "../chart.js";
@@ -636,11 +636,42 @@ function stagesForView(season, hybrid) {
   const key = defaultScenarioKey(season);
   const scenario = curveForRowKey(season, key);
   const stages = stagesForHybrid(hybrid.gduToSilk, hybrid.gduToBlackLayer);
-  const dated = datedStages(stages, scenario ? scenario.cum : [], season.plantingIso, scenario ? scenario.solidThroughOffset : -1, {
-    offsetAtTarget,
-    addDays,
-  });
+  const dated = withBandTemps(
+    datedStages(stages, scenario ? scenario.cum : [], season.plantingIso, scenario ? scenario.solidThroughOffset : -1, {
+      offsetAtTarget,
+      addDays,
+    }),
+    season
+  );
   return { key, scenario, dated };
+}
+
+/**
+ * Attaches each stage's average daily high and low to it.
+ *
+ * A stage's span runs from the day it is reached up to the day BEFORE
+ * the next stage is reached — that is the stretch the crop actually
+ * spent in it. The last entry (Maturity) is the top edge of the stack
+ * rather than a band, so it has no span and never gets a temperature.
+ *
+ * bandMeanTemps returns null unless every day in the span is observed,
+ * so anything still in the forecast window or beyond comes back blank.
+ */
+function withBandTemps(dated, season) {
+  return dated.map((stage, i) => {
+    const next = dated[i + 1];
+    const spanKnown = next && stage.offset !== null && next.offset !== null;
+    return {
+      ...stage,
+      bandTemps: spanKnown ? bandMeanTemps(season.index, season.plantingIso, stage.offset, next.offset - 1, addDays) : null,
+    };
+  });
+}
+
+/** "86°/64°" — the compact form used in chart bands and the PDF. */
+export function formatBandTemps(bt) {
+  if (!bt) return null;
+  return `${Math.round(bt.avgHigh)}°/${Math.round(bt.avgLow)}°`;
 }
 
 /**
@@ -706,8 +737,16 @@ function dataCard(season, hybrid) {
     };
   });
 
-  const rows = stages.map((stage, i) =>
-    h("tr", { className: stage.anchored ? "gdu-row-anchored" : "" }, [
+  // Weather that already happened is the same in every scenario, and
+  // this column only ever shows observed days — so it is computed once
+  // off the first scenario rather than repeated per column. Using a
+  // different scenario would give an identical answer wherever the
+  // answer is non-blank.
+  const observedTemps = cols.length ? withBandTemps(cols[0].dated, season) : [];
+
+  const rows = stages.map((stage, i) => {
+    const bt = observedTemps[i] ? observedTemps[i].bandTemps : null;
+    return h("tr", { className: stage.anchored ? "gdu-row-anchored" : "" }, [
       h("td", { className: "gdu-scenario-name" }, [
         h("span", {}, stage.label),
         stage.code ? h("span", { className: "gdu-stage-code" }, stage.code) : null,
@@ -716,15 +755,26 @@ function dataCard(season, hybrid) {
         h("span", {}, stage.gdu.toLocaleString()),
         stage.anchored ? null : h("span", { className: "gdu-stage-est" }, "est."),
       ]),
+      h(
+        "td",
+        { className: "gdu-num gdu-band-temps" },
+        bt
+          ? [h("span", {}, formatBandTemps(bt)), h("span", { className: "gdu-band-temps-days" }, `${bt.days} d`)]
+          : h("span", { className: "gdu-never" }, "—")
+      ),
       ...cols.map((c) => h("td", {}, c.dated[i].iso ? formatShort(c.dated[i].iso, { withYear: true }) : "—")),
-    ])
-  );
+    ]);
+  });
 
   return h("section", { className: "card" }, [
     h("h3", { className: "section-header" }, "Data"),
     h("div", { className: "gdu-table-wrap" }, [
       h("table", { className: "gdu-table gdu-data-table" }, [
-        h("thead", {}, h("tr", {}, [h("th", {}, "Stage"), h("th", {}, "GDU"), ...cols.map((c) => h("th", {}, c.label))])),
+        h(
+          "thead",
+          {},
+          h("tr", {}, [h("th", {}, "Stage"), h("th", {}, "GDU"), h("th", {}, "Avg high/low"), ...cols.map((c) => h("th", {}, c.label))])
+        ),
         h("tbody", {}, rows),
       ]),
     ]),
@@ -732,6 +782,11 @@ function dataCard(season, hybrid) {
       "p",
       { className: "field-note" },
       "Every number the charts draw, in one place. GDU thresholds marked “est.” are scaled from the published ladder rather than taken from the hybrid list — Planting, Silks and Maturity are the hybrid's own figures."
+    ),
+    h(
+      "p",
+      { className: "field-note" },
+      "Avg high/low is the mean daily high and mean daily low across the days the crop spent in that stage, with the day count beside it. It appears only once a stage is completely behind us — a stage the crop is still in, or hasn't reached, is left blank rather than averaged from a partial or forecast week. A single 24-hour average is deliberately not shown: 88°/68° and 95°/61° average the same, and only one of them is a problem at pollination."
     ),
   ]);
 }

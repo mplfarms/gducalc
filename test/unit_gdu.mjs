@@ -7,11 +7,13 @@
 
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { dailyGdu, percentile, accumulate, envelopeFromCalendarDate, offsetAtTarget, firstFreezeStats, buildDailyIndex, GDU_MAX_PER_DAY } from "../public/js/core/gdu.js";
+import { dailyGdu, percentile, accumulate, envelopeFromCalendarDate, offsetAtTarget, firstFreezeStats, buildDailyIndex, bandMeanTemps, GDU_MAX_PER_DAY } from "../public/js/core/gdu.js";
 import { addDays, daysBetween, isoForYear, isoToUtcMs, utcMsToIso, monthDayOf, formatShort } from "../public/js/core/dates.js";
 import { buildSeason, baselineYearsFor, SEASON_DAYS } from "../public/js/core/season.js";
 import { STAGE_LADDER, stagesForHybrid, datedStages, REFERENCE_SILK, REFERENCE_BLACK_LAYER } from "../public/js/core/stages.js";
 import { resolve as resolveHybrid, MODELS, RM_FITTED_MIN, RM_FITTED_MAX, FITTED_N } from "../public/js/core/hybridEstimate.js";
+import { bareVariety } from "../public/js/core/hybridCatalog.js";
+import { BRANDS, brandedHybridName } from "../public/js/ui/brand.js";
 
 let passed = 0;
 function test(name, fn) {
@@ -908,6 +910,100 @@ test("a stage a cool finish never reaches reports no range rather than a fake on
 
 test("a stage no scenario reaches is reported as unreached, not as a date", () => {
   assert.equal(buildWithBl(6000).currentStage.blackLayer, null);
+});
+
+// ---------------------------------------------------------------
+console.log("\nstage-band temperatures");
+// ---------------------------------------------------------------
+
+const tempIndex = buildDailyIndex([
+  // Forecast first, observed second - later wins (see buildDailyIndex).
+  { time: ["2026-05-04", "2026-05-05"], tmax: [200, 200], tmin: [200, 200], source: "forecast" },
+  { time: ["2026-05-01", "2026-05-02", "2026-05-03"], tmax: [80, 90, 70], tmin: [60, 64, 50], source: "observed" },
+]);
+
+test("band averages are the mean high and the mean low, not one blended mean", () => {
+  const bt = bandMeanTemps(tempIndex, "2026-05-01", 0, 2, addDays);
+  assert.equal(bt.days, 3);
+  assert.equal(bt.avgHigh, (80 + 90 + 70) / 3); // 80
+  assert.equal(bt.avgLow, (60 + 64 + 50) / 3); // 58
+  // The point of keeping them apart: the blended 24-hour mean is 69 for
+  // this band and would read identically for a 95/43 week.
+});
+
+test("band averages use the raw temperature, NOT the GDU-clamped one", () => {
+  // 90 F clamps to 86 for GDU purposes. It must not clamp here - this is
+  // reporting the weather, not computing development.
+  const bt = bandMeanTemps(tempIndex, "2026-05-02", 0, 0, addDays);
+  assert.equal(bt.avgHigh, 90);
+});
+
+test("a band containing any forecast day returns nothing at all", () => {
+  // May 4-5 are forecast. Averaging the observed part and printing it
+  // under a label that claims the whole stage is the failure mode this
+  // guards.
+  assert.equal(bandMeanTemps(tempIndex, "2026-05-01", 0, 3, addDays), null);
+  assert.equal(bandMeanTemps(tempIndex, "2026-05-01", 3, 4, addDays), null);
+});
+
+test("a band running past the end of the data returns nothing", () => {
+  assert.equal(bandMeanTemps(tempIndex, "2026-05-01", 0, 40, addDays), null);
+});
+
+test("a zero-length or reversed band returns nothing", () => {
+  assert.equal(bandMeanTemps(tempIndex, "2026-05-01", 2, 1, addDays), null);
+  assert.equal(bandMeanTemps(tempIndex, "2026-05-01", null, 1, addDays), null);
+});
+
+test("a min warmer than the max is still reported as high and low", () => {
+  // Defensive, mirroring dailyGdu: a transposed row must not report a
+  // low above its high.
+  const idx = buildDailyIndex([{ time: ["2026-06-01"], tmax: [55], tmin: [88], source: "observed" }]);
+  const bt = bandMeanTemps(idx, "2026-06-01", 0, 0, addDays);
+  assert.equal(bt.avgHigh, 88);
+  assert.equal(bt.avgLow, 55);
+});
+
+// ---------------------------------------------------------------
+console.log("\nBrand View hybrid naming");
+// ---------------------------------------------------------------
+
+test("a variety is rendered under the active Brand View's code", () => {
+  assert.equal(brandedHybridName("09-90 PCE", BRANDS.ncPlus), "NC 09-90 PCE");
+  assert.equal(brandedHybridName("09-90 PCE", BRANDS.midwestSeedGenetics), "MW 09-90 PCE");
+  assert.equal(brandedHybridName("09-90 PCE", BRANDS.crows), "CR 09-90 PCE");
+});
+
+test("switching Brand View replaces the code instead of stacking it", () => {
+  // The bug this prevents: "CR NC MW 09-90 PCE" after three view swaps.
+  let name = "09-90 PCE";
+  for (const b of [BRANDS.ncPlus, BRANDS.crows, BRANDS.midwestSeedGenetics, BRANDS.ncPlus]) {
+    name = brandedHybridName(name, b);
+  }
+  assert.equal(name, "NC 09-90 PCE");
+});
+
+test("re-applying the same brand is a no-op", () => {
+  assert.equal(brandedHybridName("NC 09-90 PCE", BRANDS.ncPlus), "NC 09-90 PCE");
+});
+
+test("an unrecognized prefix is left alone rather than guessed at", () => {
+  // "DKC" and "P" are real competitor prefixes; mangling them would
+  // rename somebody else's hybrid.
+  assert.equal(brandedHybridName("DKC62-08", null), "DKC62-08");
+  assert.equal(brandedHybridName("P1185Q", null), "P1185Q");
+  // Two letters that are NOT one of the three codes must survive.
+  assert.equal(brandedHybridName("XY 12-34", BRANDS.ncPlus), "NC XY 12-34");
+});
+
+test("the catalog still matches a hybrid once it carries a brand code", () => {
+  // findByVariety() and search() both go through bareVariety, so a
+  // picked hybrid keeps its "From hybrid list" badge after branding.
+  assert.equal(bareVariety("NC 09-90 PCE"), "09-90 PCE");
+  assert.equal(bareVariety("mw 09-90 pce"), "09-90 pce");
+  assert.equal(bareVariety("09-90 PCE"), "09-90 PCE");
+  assert.equal(bareVariety("DKC62-08"), "DKC62-08");
+  assert.equal(bareVariety("XY 12-34"), "XY 12-34");
 });
 
 console.log(`\n${passed} assertions passed.\n`);

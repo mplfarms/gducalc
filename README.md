@@ -1,4 +1,4 @@
-# GDU Calculator v2.3 (Beta)
+# GDU Calculator v2.4 (Beta)
 
 A hybrid GDU calculator for corn: set a field location, a planting date, and a
 hybrid (133 built in, or type your own numbers — any one of GDUs to silk, GDUs to
@@ -6,7 +6,10 @@ black layer, or a relative maturity is enough), and get predicted stage dates fo
 this season plus last year, a normal year, an abnormally hot year, and an
 abnormally cool year — with a frost-risk check on the end.
 
-**The hybrid is optional.** A ZIP code and a planting date alone produce the
+**The hybrid is optional.** The Hybrid card arrives collapsed when empty, and a
+**Clear Hybrid** button empties every box and folds it shut again — leaving the
+field and the planting date untouched, because dropping the hybrid is not
+starting over. A ZIP code and a planting date alone produce the
 accumulation chart, the percentile band and the frost dates — the heat itself,
 with no stage predictions attached. Sections that need a silk or black-layer
 rating (Predicted Stage Dates, Growth Stages, Data) are omitted rather than
@@ -110,10 +113,10 @@ npm test                  # unit + end-to-end
 npm run shots             # e2e plus screenshots into test/shots/
 ```
 
-* `test/unit_gdu.mjs` — 73 checks on the GDU math, the shipped hybrid catalog, the
+* `test/unit_gdu.mjs` — 84 checks on the GDU math, the shipped hybrid catalog, the
   stage ladder and the rating estimator, all hand-worked from the formulas rather
   than snapshotted from a previous run.
-* `test/e2e_smoke.mjs` — 79 checks driving the real UI in headless Chromium with
+* `test/e2e_smoke.mjs` — 93 checks driving the real UI in headless Chromium with
   every weather/geocode call intercepted and served deterministic synthetic data.
 
 ## How it works
@@ -188,6 +191,46 @@ over.
 10 froze by this date"), and the earliest on record. The verdict is scored against
 the **10th percentile**, not the median — a hybrid that black-layers exactly on
 the median freeze date gets caught one year in two, which is not a pass.
+
+## Stage-band temperatures
+
+Each growth-stage band carries the **average daily high and average daily low**
+across the days the crop spent in that stage — `86°/64°` — with the day count
+beside it in the Data table.
+
+Two deliberate choices:
+
+* **Not a single 24-hour mean.** A 78 °F average is a benign 88/68 week, a
+  pollination-scorching 95/61, or an 86/70 stretch of warm nights burning
+  sugars through grain fill. The one number that reads the same for all three
+  is the one that can't help anybody. High and low cost the same screen width.
+* **Observed days only, no partial averages.** `bandMeanTemps()` returns null
+  unless *every* day in the span is observed — one forecast day in the window
+  and the whole band goes blank. A stage the crop is still living through
+  doesn't have an average temperature yet, and averaging the part that has
+  happened would print a number under a label claiming to describe the whole
+  stage. Raw temperatures, not the 50/86 clamped ones: this reports the
+  weather, not development.
+
+## Brand Views and hybrid naming
+
+Midwest Seed Genetics, NC+ and Crow's are the same genetics under three
+regional labels. Two consequences, both visible in the app:
+
+* **Only the active Brand View's house brand is offered** in the Brand
+  dropdown, alongside "Other / competitor". Listing all three inside one view
+  let a rep build a report headed "Crow's" while sitting in the NC+ view.
+  Switching views *migrates* a stored house brand rather than leaving a value
+  the dropdown no longer offers; "Other" is left alone, since a competitor
+  hybrid doesn't become ours because the view changed.
+* **Hybrids are named with the view's own 2-letter code** — `NC 09-90 PCE`
+  under NC+, `MW 09-90 PCE` under Midwest — everywhere: the input box, the
+  picker, the results header, the PDF and its filename. `brandedHybridName()`
+  *replaces* any existing code rather than stacking it, so three view swaps
+  can never produce `CR NC MW 09-90 PCE`. The shipped list stays brand-neutral
+  (`09-90 PCE`) because it is one set of genetics; `bareVariety()` strips the
+  code on the way back so catalog matching and search still work. Competitor
+  names (`DKC62-08`, `P1185Q`) are never touched.
 
 ## The hybrid list
 

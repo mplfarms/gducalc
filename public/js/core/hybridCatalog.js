@@ -80,8 +80,25 @@ export function didFail() {
 }
 
 /** @param {string} variety @returns {CatalogHybrid|null} */
+/**
+ * Leading rebadge code, if present. The list is stored brand-neutral
+ * ("09-90 PCE") but the app displays and stores it under the active
+ * Brand View's code ("NC 09-90 PCE"), so every lookup has to see past
+ * that prefix or a picked hybrid would stop matching its own list entry
+ * the moment it was branded.
+ *
+ * Only these three exact codes are stripped. A competitor variety that
+ * happens to start with two letters and a space is left alone.
+ */
+const REBADGE_CODE_RE = /^(?:MW|NC|CR)\s+/i;
+
+/** Strips a leading Brand View code from a variety name. */
+export function bareVariety(variety) {
+  return String(variety || "").trim().replace(REBADGE_CODE_RE, "").trim();
+}
+
 export function findByVariety(variety) {
-  const key = String(variety || "").trim().toLowerCase();
+  const key = bareVariety(variety).toLowerCase();
   if (!key) return null;
   return hybrids.find((x) => x.variety.toLowerCase() === key) || null;
 }
@@ -94,7 +111,9 @@ export function findByVariety(variety) {
  * @returns {CatalogHybrid[]}
  */
 export function search(query) {
-  const q = String(query || "").trim().toLowerCase();
+  // Searching "NC 09-90" has to work as well as "09-90" — the code is
+  // what the user sees on screen, so it is what they will type.
+  const q = bareVariety(query).toLowerCase();
   if (!q) return hybrids;
   return hybrids.filter((x) => x.variety.toLowerCase().includes(q) || String(x.rm).includes(q));
 }

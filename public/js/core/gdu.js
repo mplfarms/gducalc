@@ -248,6 +248,54 @@ export function offsetAtTarget(cum, target) {
 }
 
 /**
+ * Average daily high and low across a run of days, for the stretch the
+ * crop spent in one growth stage.
+ *
+ * OBSERVED DAYS ONLY. If any day in the span is a forecast day, or is
+ * missing from the index at all, this returns null and the caller shows
+ * nothing. That is deliberate and it is the whole design of this
+ * function: a stage the crop has not finished living through does not
+ * have an average temperature yet, and averaging the part that HAS
+ * happened would print a number under a label claiming to describe the
+ * whole stage. A blank is honest; a partial average dressed as a full
+ * one is not.
+ *
+ * Returns the mean of the daily maxima and the mean of the daily minima
+ * rather than a single 24-hour mean, because the single mean hides the
+ * two things that matter agronomically: a 78 °F average is a benign
+ * 88/68 week, a pollination-scorching 95/61, or a 86/70 stretch of warm
+ * nights burning sugars through grain fill.
+ *
+ * @param {Object<string, DayRecord>} index
+ * @param {string} startIso the planting date offsets are measured from
+ * @param {number} firstOffset first day of the stage, inclusive
+ * @param {number} lastOffset last day of the stage, inclusive
+ * @param {(iso: string, offset: number) => string} addDaysFn
+ * @returns {{avgHigh: number, avgLow: number, days: number}|null}
+ */
+export function bandMeanTemps(index, startIso, firstOffset, lastOffset, addDaysFn) {
+  if (!Number.isFinite(firstOffset) || !Number.isFinite(lastOffset)) return null;
+  if (lastOffset < firstOffset) return null;
+  let hiSum = 0;
+  let loSum = 0;
+  let n = 0;
+  for (let i = firstOffset; i <= lastOffset; i++) {
+    const rec = index[addDaysFn(startIso, i)];
+    if (!rec) return null;
+    // Anything not measured is not history. buildDailyIndex tags the
+    // 16-day outlook "forecast", so this one check covers both "hasn't
+    // happened" and "is only predicted".
+    if (rec.source !== "observed") return null;
+    if (!Number.isFinite(rec.tmax) || !Number.isFinite(rec.tmin)) return null;
+    hiSum += Math.max(rec.tmax, rec.tmin);
+    loSum += Math.min(rec.tmax, rec.tmin);
+    n++;
+  }
+  if (n === 0) return null;
+  return { avgHigh: hiSum / n, avgLow: loSum / n, days: n };
+}
+
+/**
  * Distribution of the first fall freeze date, computed from the same
  * daily record the GDU numbers come from — no extra data source.
  *

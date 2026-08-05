@@ -230,6 +230,14 @@ export function buildSeason({ index, plantingIso, gduToSilk, gduToBlackLayer, la
   return {
     plantingIso,
     plantingYear,
+    // The daily record itself rides along. Stage-band temperature
+    // averages need per-day highs and lows, but which days belong to
+    // which band depends on the hybrid's ladder and the scenario being
+    // viewed — both of which live in the UI layer, not here. Handing back
+    // the index the season was built from is cheaper and less tangled
+    // than threading a second copy through every caller, and it is a
+    // reference to the object the caller already passed in, not a copy.
+    index,
     scenarios,
     rows,
     env,

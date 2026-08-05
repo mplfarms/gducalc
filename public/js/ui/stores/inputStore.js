@@ -29,6 +29,8 @@
 
 import { createPubSub, readJson, writeJson } from "./pubsub.js";
 import { resolve as resolveHybridInputs } from "../../core/hybridEstimate.js";
+import * as brandStore from "./brandStore.js";
+import { getBrand, brandedHybridName } from "../brand.js";
 
 const LOCATION_KEY = "gdu.location";
 const PLANTING_KEY = "gdu.plantingDate";
@@ -125,6 +127,45 @@ export function loadSavedHybrid(id) {
   });
 }
 
+/**
+ * Wipes the hybrid being edited back to empty.
+ *
+ * Resets the whole hybrid object rather than blanking fields one by
+ * one, so nothing survives that a later field could be matched against —
+ * the "from hybrid list" badge is derived from the name, so clearing the
+ * name clears the badge with it.
+ *
+ * Deliberately does NOT touch the saved list, the location or the
+ * planting date: clearing the hybrid means "calculate the heat for this
+ * field without a hybrid", not "start over".
+ */
+export function clearHybrid() {
+  state = { ...state, hybrid: {} };
+  writeJson(CURRENT_KEY, state.hybrid);
+  pubsub.notify();
+}
+
+/**
+ * How the hybrid is titled on every screen, the PDF and the filename.
+ *
+ * A HOUSE hybrid is titled with the active Brand View's own 2-letter
+ * code — "NC 09-90 PCE" under NC+, "MW 09-90 PCE" under Midwest. Same
+ * genetics, three regional labels, and the report should carry the one
+ * the grower actually buys. Spelling out the full catalog name instead
+ * ("NC+ Hybrids 09-90 PCE") reads like a database row, not a hybrid.
+ *
+ * A COMPETITOR hybrid is titled with just what was typed. Prefixing
+ * "Other" onto someone else's hybrid produced "Other DKC62-08", which
+ * was never right.
+ */
+function hybridLabel(h) {
+  const name = String(h.name || "").trim();
+  const activeBrand = getBrand(brandStore.getState().selectedBrand);
+  const isHouse = activeBrand && String(h.brand || "").trim() === activeBrand.catalogBrandName;
+  if (isHouse) return brandedHybridName(name, activeBrand) || activeBrand.displayName;
+  return name || "This hybrid";
+}
+
 /** True when no hybrid information has been entered at all. */
 export function hasNoHybridInput() {
   const h = state.hybrid || {};
@@ -153,7 +194,7 @@ export function validatedHybrid() {
   const resolved = resolveHybridInputs({ gduToSilk: h.gduToSilk, gduToBlackLayer: h.gduToBlackLayer, rm: h.rm });
   if (!resolved.ok) return resolved;
 
-  const label = [String(h.brand || "").trim(), String(h.name || "").trim()].filter(Boolean).join(" ") || "This hybrid";
+  const label = hybridLabel(h);
   return {
     ok: true,
     value: {

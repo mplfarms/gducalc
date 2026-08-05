@@ -198,6 +198,16 @@ async function main() {
   await page.reload({ waitUntil: "networkidle" });
   await page.waitForSelector(".screen-body");
 
+  // ---- collapsed hybrid card ------------------------------------------
+  // With no hybrid entered the card arrives folded shut, so a
+  // ZIP-and-date run doesn't scroll past four empty boxes.
+  const collapsedAtStart = await page.locator(".gdu-hybrid-body").isHidden();
+  check("the hybrid card starts collapsed when empty", () => assert.equal(collapsedAtStart, true));
+  const emptyNote = await page.locator(".gdu-hybrid-empty").textContent();
+  check("the collapsed card says what Calculate will do without a hybrid", () => assert.match(emptyNote, /no silk or black layer dates/i));
+  await page.locator(".gdu-hybrid-toggle").click();
+  await page.waitForSelector(".gdu-hybrid-body:not([hidden])");
+
   // The shared stylesheet resets `font: inherit` on button/input/textarea
   // but not select, so the Brand box used to render at the browser's own
   // control font and read as a different, smaller field.
@@ -209,7 +219,7 @@ async function main() {
     };
     return {
       select: g(document.querySelector('select[aria-label="Brand"]')),
-      input: g(document.querySelector('input[placeholder="e.g. 09-90 PCE"]')),
+      input: g(document.querySelector('input[aria-label="Hybrid name"]')),
     };
   });
   check("the Brand select matches the text inputs", () => {
@@ -217,6 +227,19 @@ async function main() {
     assert.equal(boxMetrics.select.font, boxMetrics.input.font, "font size");
     assert.equal(boxMetrics.select.appearance, "none", "native chrome should be replaced");
   });
+
+  // ---- one house brand per Brand View ---------------------------------
+  // Midwest / NC+ / Crow's are the same genetics under three labels, so
+  // offering all three inside one Brand View let a rep build a report
+  // headed with a brand they were not actually in.
+  const brandOpts = await page.locator('select[aria-label="Brand"] option').allTextContents();
+  check("only the active house brand is offered, plus competitor", () => {
+    assert.deepEqual(brandOpts, ["— Select brand —", "NC+ Hybrids", "Other / competitor"]);
+  });
+  const brandVal = await page.inputValue('select[aria-label="Brand"]');
+  check("the brand defaults to the active Brand View", () => assert.equal(brandVal, "NC+ Hybrids"));
+  const namePlaceholder = await page.getAttribute('input[aria-label="Hybrid name"]', "placeholder");
+  check("the hybrid placeholder carries the Brand View's code", () => assert.equal(namePlaceholder, "e.g. NC 09-90 PCE"));
 
   // ---- built-in hybrid list ------------------------------------------
   await page.waitForSelector(".gdu-pick-hybrid-btn:not([disabled])", { timeout: 10000 });
@@ -251,9 +274,11 @@ async function main() {
   await page.waitForSelector(".gdu-catalog-line");
   const silkVal = await page.inputValue('input[aria-label="GDUs to silk"]');
   const blVal = await page.inputValue('input[aria-label="GDUs to black layer"]');
-  const nameVal = await page.inputValue('input[placeholder="e.g. 09-90 PCE"]');
+  const nameVal = await page.inputValue('input[aria-label="Hybrid name"]');
   check("picking a hybrid fills the variety and both GDU boxes", () => {
-    assert.equal(nameVal, "09-90 PCE");
+    // Stored and shown under the active Brand View's code — the list
+    // itself is brand-neutral, the label is not.
+    assert.equal(nameVal, "NC 09-90 PCE");
     assert.equal(silkVal, "1290");
     assert.equal(blVal, "2620");
   });
@@ -540,6 +565,34 @@ async function main() {
   const withHybridThresholds = await page.locator(".gdu-chart-svg .gdu-stage-line").count();
   check("the accumulation chart draws a line at silk and at black layer", () => assert.equal(withHybridThresholds, 2));
 
+  // ---- stage-band average high/low ------------------------------------
+  // Only for stages the crop has finished living through. A stage still
+  // under way, or one only the forecast has reached, is blank rather
+  // than averaged from a partial week.
+  const bandLabels = await page.locator("text.gdu-stage-band-label").allTextContents();
+  const withTemps = bandLabels.filter((t) => /\d+°\/\d+°/.test(t));
+  check("completed stage bands carry an average high/low", () => {
+    assert.ok(withTemps.length >= 3, `only ${withTemps.length} of ${bandLabels.length} bands had temps: ${JSON.stringify(bandLabels)}`);
+  });
+  check("the average is a high/low pair, not a single 24-hour mean", () => {
+    for (const t of withTemps) {
+      const m = t.match(/(\d+)°\/(\d+)°/);
+      assert.ok(m, t);
+      assert.ok(Number(m[1]) > Number(m[2]), `high should exceed low in "${t}"`);
+      assert.ok(Number(m[1]) < 130 && Number(m[2]) > -40, `implausible temps in "${t}"`);
+    }
+  });
+  const dataTempCells = await page.locator(".gdu-data-table .gdu-band-temps").allTextContents();
+  check("the Data table repeats the averages with their day counts", () => {
+    const filled = dataTempCells.filter((t) => /°/.test(t));
+    assert.ok(filled.length >= 3, `only ${filled.length} filled cells`);
+    for (const t of filled) assert.match(t, /\d+\s?d$/);
+  });
+  check("stages that have not fully happened are blank, not estimated", () => {
+    const blanks = dataTempCells.filter((t) => t.trim() === "—");
+    assert.ok(blanks.length >= 1, "expected at least the final stages to be blank");
+  });
+
   // ---- brand watermark ----------------------------------------------
   const wmCount = await page.locator("image.gdu-watermark").count();
   check("exactly one watermark, on the accumulation chart only", () => assert.equal(wmCount, 1));
@@ -718,6 +771,46 @@ async function main() {
   });
   if (SHOTS) await page.screenshot({ path: path.join(SHOT_DIR, "15-projected-range.png"), fullPage: true });
 
+  // ---- Clear Hybrid ----------------------------------------------------
+  await page.evaluate(() => { window.location.hash = "#/calculator"; });
+  await page.waitForSelector(".gdu-hybrid-toggle");
+  const beforeClear = await page.inputValue('input[aria-label="Hybrid name"]');
+  check("a hybrid is loaded before clearing", () => assert.ok(beforeClear.length > 0));
+  await page.getByRole("button", { name: "Clear Hybrid" }).click();
+  await page.waitForFunction(() => document.querySelector(".gdu-hybrid-body")?.hidden === true);
+  const cleared = await page.evaluate(() => ({
+    name: document.querySelector('input[aria-label="Hybrid name"]').value,
+    silk: document.querySelector('input[aria-label="GDUs to silk"]').value,
+    bl: document.querySelector('input[aria-label="GDUs to black layer"]').value,
+    rm: document.querySelector('input[aria-label="Relative maturity"]').value,
+    stored: JSON.parse(localStorage.getItem("gdu.currentHybrid") || "{}"),
+    collapsed: document.querySelector(".gdu-hybrid-body").hidden,
+    location: JSON.parse(localStorage.getItem("gdu.location") || "null"),
+    planting: JSON.parse(localStorage.getItem("gdu.plantingDate") || "null"),
+  }));
+  check("Clear Hybrid empties every box and folds the card shut", () => {
+    assert.equal(cleared.name, "");
+    assert.equal(cleared.silk, "");
+    assert.equal(cleared.bl, "");
+    assert.equal(cleared.rm, "");
+    assert.equal(cleared.collapsed, true);
+  });
+  check("Clear Hybrid wipes the stored hybrid, not the field or the date", () => {
+    // A leftover value here would let the next typed hybrid inherit
+    // another one's numbers.
+    assert.deepEqual(cleared.stored, {});
+    assert.ok(cleared.location, "location should survive");
+    assert.ok(cleared.planting, "planting date should survive");
+  });
+  const savedStillThere = await page.locator(".gdu-saved-row").count();
+  check("Clear Hybrid leaves the saved list alone", () => assert.ok(savedStillThere >= 0));
+  await page.getByRole("button", { name: "Calculate GDUs" }).click();
+  await page.waitForSelector(".gdu-chart-svg", { timeout: 20000 });
+  const afterClearBody = await page.locator(".screen-body").textContent();
+  check("calculating straight after Clear Hybrid gives the no-hybrid view", () => {
+    assert.match(afterClearBody, /No hybrid entered/i);
+  });
+
   // ---- no hybrid at all: ZIP + planting date only ---------------------
   // The whole point is that a grower with no tech sheet in hand can still
   // see the heat curve. Nothing that needs a silk or black layer rating
@@ -725,8 +818,12 @@ async function main() {
   await page.evaluate(() => localStorage.setItem("gdu.themeMode", JSON.stringify("light")));
   await page.reload({ waitUntil: "networkidle" });
   await page.evaluate(() => { window.location.hash = "#/calculator"; });
+  await page.waitForSelector(".gdu-hybrid-toggle");
+  // The card is folded shut after Clear Hybrid; open it to prove the
+  // boxes really are empty rather than just out of sight.
+  if (await page.locator(".gdu-hybrid-body").isHidden()) await page.locator(".gdu-hybrid-toggle").click();
   await page.waitForSelector('input[aria-label="GDUs to silk"]');
-  await page.fill('input[placeholder="e.g. 09-90 PCE"]', "");
+  await page.fill('input[aria-label="Hybrid name"]', "");
   await page.fill('input[aria-label="GDUs to silk"]', "");
   await page.fill('input[aria-label="GDUs to black layer"]', "");
   await page.fill('input[aria-label="Relative maturity"]', "");

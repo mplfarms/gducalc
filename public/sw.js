@@ -20,7 +20,7 @@
 
 const JSPDF_URL = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
 
-const CACHE_VERSION = "v2.3-beta";
+const CACHE_VERSION = "v2.4-beta";
 const CACHE_NAME = `gdu-calculator-${CACHE_VERSION}`;
 
 // Enumerated app shell — the Cache API has no wildcard support, so this

@@ -166,6 +166,42 @@ function swapHybridBrandCode(hybrid, fromBrand, toBrand) {
 }
 
 /**
+ * The 2-letter code for a brand, or null for anything outside the
+ * rebadge group (a competitor hybrid keeps whatever the user typed).
+ * @param {typeof BRANDS[BrandId]|null} brand
+ * @returns {string|null}
+ */
+export function hybridCodeFor(brand) {
+  return brand ? HYBRID_CODE_BY_BRAND_ID[brand.id] || null : null;
+}
+
+/**
+ * Renders a hybrid variety under the active Brand View's own code —
+ * "09-90 PCE" becomes "MW 09-90 PCE" under Midwest and "NC 09-90 PCE"
+ * under NC+, which is the same genetics wearing the label the grower in
+ * front of you actually buys.
+ *
+ * Any code already on the front is REPLACED, not stacked, so switching
+ * views can never produce "NC MW 09-90 PCE", and re-applying is a no-op.
+ * Only the three known codes are stripped: a competitor hybrid like
+ * "P1185Q" or "DKC62-08" is left exactly as typed, because guessing at
+ * an unrecognized prefix would mangle real names.
+ *
+ * @param {string} name variety as typed or as listed
+ * @param {typeof BRANDS[BrandId]|null} brand active Brand View
+ * @returns {string}
+ */
+export function brandedHybridName(name, brand) {
+  const trimmed = String(name || "").trim();
+  const code = hybridCodeFor(brand);
+  if (!trimmed || !code) return trimmed;
+  const knownCodes = Object.values(HYBRID_CODE_BY_BRAND_ID);
+  const match = trimmed.match(/^([A-Za-z]{2})\s+(.*)$/);
+  const bare = match && knownCodes.includes(match[1].toUpperCase()) ? match[2] : trimmed;
+  return `${code} ${bare}`;
+}
+
+/**
  * Returns a copy of `entries` with .brand (and, when recognized, the
  * hybrid name's brand code prefix — see swapHybridBrandCode() above)
  * relabeled for display purposes when a Brand View is selected: any

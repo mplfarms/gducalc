@@ -1067,3 +1067,58 @@ select.text-input {
 /* A single mid-gray chevron serves both themes — it's a decorative
    affordance, not information, and it reads against both the light and
    the dark field background without needing two encoded copies. */
+
+/* ---------- stage-band temperatures ---------- */
+
+/* Avg high/low sits in the Data table beside the day count it was
+   computed over — the count is the reader's check on the number, so it
+   travels with it rather than living in a footnote. */
+.gdu-band-temps {
+  white-space: nowrap;
+}
+
+.gdu-band-temps-days {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin-left: 6px;
+}
+
+/* ---------- collapsible hybrid card ---------- */
+
+.gdu-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* The header bar normally spans the card; inside the flex row it has to
+   stop growing so the toggle has somewhere to sit. */
+.gdu-section-header-inline {
+  flex: 1;
+  min-width: 0;
+}
+
+.gdu-hybrid-toggle {
+  flex-shrink: 0;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 14px;
+  min-height: 44px;
+  font: inherit;
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: var(--accent-strong);
+  cursor: pointer;
+}
+
+.gdu-hybrid-empty {
+  margin-top: 4px;
+}
+
+/* Save and Clear share a row; each stays a full 44px touch target. */
+.gdu-hybrid-actions .btn {
+  flex: 1;
+  margin-top: 4px;
+}

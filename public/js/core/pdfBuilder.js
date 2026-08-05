@@ -708,7 +708,10 @@ export function buildPdf({ jsPDF, season, hybrid, location, brand, logoDataUrl, 
       doc.setFont("helvetica", from.anchored ? "bold" : "normal");
       doc.setFontSize(8);
       setText(INK);
-      const text = `${from.label}${from.iso ? ` (~ ${formatShort(from.iso, { withYear: true })})` : " (not reached)"}`;
+      // Same rule as the on-screen band: average high/low only once the
+      // stage is entirely behind us, blank otherwise.
+      const temps = from.bandTemps ? ` · ${Math.round(from.bandTemps.avgHigh)}°/${Math.round(from.bandTemps.avgLow)}°` : "";
+      const text = `${from.label}${from.iso ? ` (~ ${formatShort(from.iso, { withYear: true })})` : " (not reached)"}${temps}`;
       doc.text(text, plot.x + plot.w / 2, top + bandH / 2 + 3, { align: "center" });
     }
 
