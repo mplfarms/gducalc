@@ -24,7 +24,7 @@ import * as inputStore from "../stores/inputStore.js";
 import * as brandStore from "../stores/brandStore.js";
 import { getBrand } from "../brand.js";
 import { loadTemperatureData, toSeries } from "../../core/weather.js";
-import { buildDailyIndex, offsetAtTarget, bandMeanTemps } from "../../core/gdu.js";
+import { buildDailyIndex, offsetAtTarget, bandTempStats } from "../../core/gdu.js";
 import { buildSeason, baselineYearsFor, BASELINE_YEARS } from "../../core/season.js";
 import { addDays, daysBetween, formatShort, yearOf } from "../../core/dates.js";
 import { renderGduChart, buildChartLegend } from "../chart.js";
@@ -771,7 +771,7 @@ function stagesForView(season, hybrid) {
  * spent in it. The last entry (Maturity) is the top edge of the stack
  * rather than a band, so it has no span and never gets a temperature.
  *
- * bandMeanTemps returns null unless every day in the span is observed,
+ * bandTempStats returns null unless every day in the span is observed,
  * so anything still in the forecast window or beyond comes back blank.
  */
 function withBandTemps(dated, season) {
@@ -780,15 +780,18 @@ function withBandTemps(dated, season) {
     const spanKnown = next && stage.offset !== null && next.offset !== null;
     return {
       ...stage,
-      bandTemps: spanKnown ? bandMeanTemps(season.index, season.plantingIso, stage.offset, next.offset - 1, addDays) : null,
+      bandTemps: spanKnown ? bandTempStats(season.index, season.plantingIso, stage.offset, next.offset - 1, addDays) : null,
     };
   });
 }
 
-/** "86°/64°" — the compact form used in chart bands and the PDF. */
+/**
+ * "88°/70°" — hottest daytime high over warmest nighttime low, the
+ * compact form used in chart bands, the Data table and the PDF.
+ */
 export function formatBandTemps(bt) {
   if (!bt) return null;
-  return `${Math.round(bt.avgHigh)}°/${Math.round(bt.avgLow)}°`;
+  return `${Math.round(bt.maxHigh)}°/${Math.round(bt.maxLow)}°`;
 }
 
 /**
@@ -899,7 +902,7 @@ function dataCard(season, hybrid) {
         h(
           "thead",
           {},
-          h("tr", {}, [h("th", {}, "Stage"), h("th", {}, "GDU"), h("th", {}, "Avg high/low"), ...cols.map((c) => h("th", {}, c.label))])
+          h("tr", {}, [h("th", {}, "Stage"), h("th", {}, "GDU"), h("th", {}, "Hottest / warmest night"), ...cols.map((c) => h("th", {}, c.label))])
         ),
         h("tbody", {}, rows),
       ]),
@@ -912,7 +915,7 @@ function dataCard(season, hybrid) {
     h(
       "p",
       { className: "field-note" },
-      "Avg high/low is the mean daily high and mean daily low across the days the crop spent in that stage, with the day count beside it. It appears only once a stage is completely behind us — a stage the crop is still in, or hasn't reached, is left blank rather than averaged from a partial or forecast week. A single 24-hour average is deliberately not shown: 88°/68° and 95°/61° average the same, and only one of them is a problem at pollination."
+      "The pair is the hottest daytime high and the warmest nighttime low anywhere in that stage, with the number of days beside it — not averages. Those two are what explain a yield result: peak heat is what sterilizes pollen at silking, and the warmest nights are what drive respiration to burn sugars off during grain fill, which costs test weight even when the days look ordinary. An average buries both — one 98° day in an otherwise mild fortnight barely moves a mean, and that is the day that did the damage. Shown only once a stage is completely behind us; a stage the crop is still in is left blank rather than reporting a hottest-day-so-far that changes tomorrow."
     ),
   ]);
 }

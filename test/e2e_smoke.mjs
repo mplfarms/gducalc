@@ -612,8 +612,49 @@ async function main() {
   const seriesCount = await page.locator(".gdu-chart-svg path.gdu-line").count();
   check("the chart draws every series", () => assert.ok(seriesCount >= 5, `only ${seriesCount} line segments drawn`));
 
-  const legendCount = await page.locator(".gdu-legend-item").count();
-  check("a legend is present for all five series", () => assert.equal(legendCount, 5));
+  const legend = await page.evaluate(() =>
+    [...document.querySelectorAll(".gdu-legend-item")].map((i) => ({
+      text: i.querySelector("span:last-child").textContent,
+      capped: i.querySelector(".gdu-legend-swatch-capped") !== null,
+      zero: i.querySelector(".gdu-legend-swatch-zero") !== null,
+    }))
+  );
+  check("a legend is present for all five series", () => {
+    const series = legend.filter((l) => !l.capped && !l.zero);
+    assert.equal(series.length, 5);
+  });
+
+  // ---- heat-cap / cold-floor day markers -------------------------------
+  const limitDays = await page.evaluate(() => {
+    const seg = [...document.querySelectorAll(".gdu-limit-day")];
+    const cs = (el) => getComputedStyle(el).stroke;
+    return {
+      capped: seg.filter((e) => e.classList.contains("gdu-limit-capped")).length,
+      zero: seg.filter((e) => e.classList.contains("gdu-limit-zero")).length,
+      cappedStroke: seg.find((e) => e.classList.contains("gdu-limit-capped")) ? cs(seg.find((e) => e.classList.contains("gdu-limit-capped"))) : null,
+      // A segment must never be both, and must sit on the season line.
+      bothClasses: seg.filter((e) => e.classList.contains("gdu-limit-capped") && e.classList.contains("gdu-limit-zero")).length,
+    };
+  });
+  check("days that hit the 86 °F cap are marked in red on the season line", () => {
+    assert.ok(limitDays.capped > 0, "the synthetic season runs hot; expected capped days");
+    assert.equal(limitDays.cappedStroke, "rgb(204, 31, 31)");
+  });
+  check("a day is never marked as both capped and zero", () => assert.equal(limitDays.bothClasses, 0));
+  check("the legend only lists a marker that is actually on the chart", () => {
+    const cappedItems = legend.filter((l) => l.capped);
+    const zeroItems = legend.filter((l) => l.zero);
+    assert.equal(cappedItems.length, limitDays.capped > 0 ? 1 : 0);
+    assert.equal(zeroItems.length, limitDays.zero > 0 ? 1 : 0);
+    if (cappedItems.length) assert.match(cappedItems[0].text, /86 °F/);
+  });
+  check("the legend states how many days hit each limit", () => {
+    const capped = legend.find((l) => l.capped);
+    if (!capped) return;
+    const m = capped.text.match(/\((\d+)\)$/);
+    assert.ok(m, `no count in "${capped.text}"`);
+    assert.equal(Number(m[1]), limitDays.capped);
+  });
 
   const stageLines = await page.locator(".gdu-chart-svg line.gdu-stage-line").count();
   check("both stage reference lines are drawn", () => assert.equal(stageLines, 2));
@@ -681,10 +722,40 @@ async function main() {
   const topLabel = await page.locator(".gdu-stage-top-label").textContent();
   check("maturity is labeled at the top of the stack", () => assert.match(topLabel, /Maturity \(black layer\) \(~ /));
 
-  // The stage ramp hue is per Brand View: green for Midwest (whose own
-  // identity is green), harvest gold for NC+ and Crow's.
-  const bandFill = await page.evaluate(() => getComputedStyle(document.querySelector(".gdu-stage-band")).fill);
-  check("NC+ gets the harvest gold stage ramp, not green", () => assert.equal(bandFill, "rgb(218, 145, 0)"));
+  // The ramp splits at R1 in EVERY Brand View — green while the plant
+  // builds leaves, harvest gold once it fills grain. It encodes the crop,
+  // not the label on the bag, so it no longer varies by brand.
+  const ramp = await page.evaluate(() => {
+    const bands = [...document.querySelectorAll(".gdu-stage-band")];
+    const labels = [...document.querySelectorAll("text.gdu-stage-band-label")].map((t) => t.textContent);
+    return {
+      veg: bands.filter((b) => b.classList.contains("gdu-stage-band-veg")).map((b) => ({ fill: getComputedStyle(b).fill, a: Number(b.getAttribute("fill-opacity")) })),
+      rep: bands.filter((b) => b.classList.contains("gdu-stage-band-rep")).map((b) => ({ fill: getComputedStyle(b).fill, a: Number(b.getAttribute("fill-opacity")) })),
+      both: bands.filter((b) => b.classList.contains("gdu-stage-band-veg") && b.classList.contains("gdu-stage-band-rep")).length,
+      labels,
+    };
+  });
+  check("the ramp runs green up to R1, then harvest gold to black layer", () => {
+    assert.ok(ramp.veg.length > 0 && ramp.rep.length > 0, "expected both halves");
+    assert.equal(ramp.both, 0, "a band cannot be in both halves");
+    for (const b of ramp.veg) assert.equal(b.fill, "rgb(47, 125, 79)");
+    for (const b of ramp.rep) assert.equal(b.fill, "rgb(218, 145, 0)");
+  });
+  check("each half fades independently, so the gold restarts pale at R1", () => {
+    // The reset is the point — it puts a visible mark on the switch from
+    // vegetative growth to grain fill.
+    const first = (arr) => arr[0].a;
+    const last = (arr) => arr[arr.length - 1].a;
+    assert.ok(last(ramp.veg) > first(ramp.veg), "green should deepen toward R1");
+    assert.ok(last(ramp.rep) > first(ramp.rep), "gold should deepen toward black layer");
+    assert.ok(first(ramp.rep) < last(ramp.veg), "gold must restart lighter than the green it follows");
+  });
+  check("the split falls exactly at Silks, not a band early or late", () => {
+    // 15 stages -> 14 bands; Silks is index 10, so 10 vegetative bands
+    // (Planting..Sixteen leaves) and 4 reproductive (Silks..Denting).
+    assert.equal(ramp.veg.length, 10);
+    assert.equal(ramp.rep.length, 4);
+  });
   const backdropLight = await page.evaluate(() => getComputedStyle(document.querySelector(".gdu-stage-backdrop")).fill);
   check("light mode composites straight onto the white card", () => assert.equal(backdropLight, "rgb(255, 255, 255)"));
 
@@ -735,10 +806,10 @@ async function main() {
   // than averaged from a partial week.
   const bandLabels = await page.locator("text.gdu-stage-band-label").allTextContents();
   const withTemps = bandLabels.filter((t) => /\d+°\/\d+°/.test(t));
-  check("completed stage bands carry an average high/low", () => {
+  check("completed stage bands carry a hottest-day / warmest-night pair", () => {
     assert.ok(withTemps.length >= 3, `only ${withTemps.length} of ${bandLabels.length} bands had temps: ${JSON.stringify(bandLabels)}`);
   });
-  check("the average is a high/low pair, not a single 24-hour mean", () => {
+  check("the pair is a high over a low, not a single 24-hour mean", () => {
     for (const t of withTemps) {
       const m = t.match(/(\d+)°\/(\d+)°/);
       assert.ok(m, t);
@@ -746,13 +817,46 @@ async function main() {
       assert.ok(Number(m[1]) < 130 && Number(m[2]) > -40, `implausible temps in "${t}"`);
     }
   });
+  // The "N GDU through <date>" rule cuts through whichever band the crop
+  // is currently in, and that band's centered label used to be drawn on
+  // top of it — an unreadable smear on the one band that matters most.
+  const labelOverlap = await page.evaluate(() => {
+    const today = document.querySelector("text.gdu-stage-today-label");
+    if (!today) return { checked: 0, hits: [] };
+    const t = today.getBoundingClientRect();
+    const hits = [];
+    for (const el of document.querySelectorAll("text.gdu-stage-band-label")) {
+      const b = el.getBoundingClientRect();
+      const overlaps = t.left < b.right && b.left < t.right && t.top < b.bottom && b.top < t.bottom;
+      if (overlaps) hits.push(el.textContent);
+    }
+    // Does the rule actually cut through a band? If not this check is
+    // vacuous and should say so.
+    const line = document.querySelector("line.gdu-stage-today-line");
+    const ly = line ? Number(line.getAttribute("y1")) : null;
+    let splitsBand = false;
+    for (const r of document.querySelectorAll("rect.gdu-stage-band")) {
+      const top = Number(r.getAttribute("y"));
+      const bot = top + Number(r.getAttribute("height"));
+      if (ly !== null && ly > top + 1 && ly < bot - 1) splitsBand = true;
+    }
+    return { checked: document.querySelectorAll("text.gdu-stage-band-label").length, hits, splitsBand };
+  });
+  check("the progress marker never overprints a band label", () => {
+    assert.ok(labelOverlap.checked > 0, "no band labels were drawn at all");
+    assert.deepEqual(labelOverlap.hits, [], "these labels collide with the GDU-through marker");
+    // Non-vacuous: the rule must actually be cutting through a band, or
+    // this test would pass on a chart that never had the problem.
+    assert.ok(labelOverlap.splitsBand, "the progress rule did not land inside any band - test proves nothing");
+  });
+
   const dataTempCells = await page.locator(".gdu-data-table .gdu-band-temps").allTextContents();
-  check("the Data table repeats the averages with their day counts", () => {
+  check("the Data table repeats the pair with its day count", () => {
     const filled = dataTempCells.filter((t) => /°/.test(t));
     assert.ok(filled.length >= 3, `only ${filled.length} filled cells`);
     for (const t of filled) assert.match(t, /\d+\s?d$/);
   });
-  check("stages that have not fully happened are blank, not estimated", () => {
+  check("stages that have not fully happened are blank, not partial", () => {
     const blanks = dataTempCells.filter((t) => t.trim() === "—");
     assert.ok(blanks.length >= 1, "expected at least the final stages to be blank");
   });
@@ -823,6 +927,10 @@ async function main() {
   // double-sided, which is what gets handed to a grower.
   const pageCount = countPdfPages(pdfBuf);
   check("the PDF fits on two sheets", () => assert.equal(pageCount, 2));
+  check("the PDF explains the heat-cap rules", () => {
+    // A coloured halo with no key is just a smudge behind the line.
+    assert.match(pdfBuf.toString("latin1"), /Vertical rules:/);
+  });
 
   const footer = pdfBuf.toString("latin1");
   check("the footer says GDU Calculator, not a URL", () => {
@@ -903,31 +1011,47 @@ async function main() {
   check("dark mode applies", () => assert.equal(darkTheme, "dark"));
 
   const darkRamp = await page.evaluate(() => ({
-    fill: getComputedStyle(document.querySelector(".gdu-stage-band")).fill,
+    veg: getComputedStyle(document.querySelector(".gdu-stage-band-veg")).fill,
+    rep: getComputedStyle(document.querySelector(".gdu-stage-band-rep")).fill,
     backdrop: getComputedStyle(document.querySelector(".gdu-stage-backdrop")).fill,
   }));
-  check("dark mode gold composites over a warm backdrop, not the blue card", () => {
-    assert.equal(darkRamp.fill, "rgb(232, 180, 81)");
-    // Without this the ramp desaturates to khaki over NC+ blue.
-    assert.equal(darkRamp.backdrop, "rgb(36, 31, 20)");
+  check("dark mode lifts both ramp hues", () => {
+    assert.equal(darkRamp.veg, "rgb(87, 176, 125)");
+    assert.equal(darkRamp.rep, "rgb(232, 180, 81)");
+  });
+  check("both hues composite over a neutral base, not the brand card", () => {
+    // Gold over NC+'s blue card desaturates to khaki; gold over Midwest's
+    // dark green does the same. One near-neutral base serves both hues
+    // without muddying the green, which a warm brown base would have.
+    assert.equal(darkRamp.backdrop, "rgb(30, 29, 27)");
   });
   const dividerStroke = await page.evaluate(() => getComputedStyle(document.querySelector(".gdu-stage-divider")).stroke);
-  check("band dividers follow the backdrop, not the card", () => assert.equal(dividerStroke, "rgb(36, 31, 20)"));
+  check("band dividers follow the backdrop, not the card", () => assert.equal(dividerStroke, "rgb(30, 29, 27)"));
 
 
   if (SHOTS) await page.screenshot({ path: path.join(SHOT_DIR, "04-results-dark.png"), fullPage: true });
 
-  // Midwest must keep green in both modes — the gold is only for the two
-  // brands a green ramp clashes with.
+  // Midwest gets the SAME two-hue ramp as everyone else now — the split
+  // is the crop's biology, not a brand choice.
   await page.evaluate(() => localStorage.setItem("gdu.selectedBrand", JSON.stringify("midwestSeedGenetics")));
   await page.reload({ waitUntil: "networkidle" });
   await page.evaluate(() => { window.location.hash = "#/results"; });
   await page.waitForSelector(".gdu-stage-band", { timeout: 20000 });
-  const midwestFill = await page.evaluate(() => getComputedStyle(document.querySelector(".gdu-stage-band")).fill);
-  const midwestBackdrop = await page.evaluate(() => getComputedStyle(document.querySelector(".gdu-stage-backdrop")).fill);
-  check("Midwest keeps the green ramp on its own card color", () => {
-    assert.equal(midwestFill, "rgb(87, 176, 125)");
-    assert.equal(midwestBackdrop, "rgb(12, 74, 44)"); // Midwest's dark card — no warm base needed
+  const midwestRamp = await page.evaluate(() => ({
+    veg: getComputedStyle(document.querySelector(".gdu-stage-band-veg")).fill,
+    rep: getComputedStyle(document.querySelector(".gdu-stage-band-rep")).fill,
+    backdrop: getComputedStyle(document.querySelector(".gdu-stage-backdrop")).fill,
+    vegCount: document.querySelectorAll(".gdu-stage-band-veg").length,
+    repCount: document.querySelectorAll(".gdu-stage-band-rep").length,
+  }));
+  check("Midwest gets the identical two-hue ramp, not a brand variant", () => {
+    assert.equal(midwestRamp.veg, "rgb(87, 176, 125)");
+    assert.equal(midwestRamp.rep, "rgb(232, 180, 81)");
+    assert.equal(midwestRamp.vegCount, 10);
+    assert.equal(midwestRamp.repCount, 4);
+    // Same neutral base as every other brand — gold over Midwest's dark
+    // green card desaturates just like it did over NC+'s blue.
+    assert.equal(midwestRamp.backdrop, "rgb(30, 29, 27)");
   });
   const midwestWatermark = await page.evaluate(() => {
     const img = document.querySelector("image.gdu-watermark");

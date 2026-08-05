@@ -629,31 +629,32 @@
    but disappears. #DA9100 spans 0.32 and still reads unmistakably as
    harvest gold. Band-label contrast stays at 8.6:1 or better at every
    step. */
-.gdu-stage-band {
+/* NO LONGER PER BRAND. Both hues now appear in every Brand View,
+   because the split encodes the crop's biology — green while it is
+   building leaves, gold once it is filling grain — and that does not
+   change depending on whose label is on the bag. */
+.gdu-stage-band-veg {
   fill: #2f7d4f;
 }
 
-:root[data-brand="ncPlus"] .gdu-stage-band,
-:root[data-brand="crows"] .gdu-stage-band {
+.gdu-stage-band-rep {
   fill: #da9100;
 }
 
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme]) .gdu-stage-band {
+  :root:not([data-theme]) .gdu-stage-band-veg {
     fill: #57b07d;
   }
-  :root:not([data-theme])[data-brand="ncPlus"] .gdu-stage-band,
-  :root:not([data-theme])[data-brand="crows"] .gdu-stage-band {
+  :root:not([data-theme]) .gdu-stage-band-rep {
     fill: #e8b451;
   }
 }
 
-:root[data-theme="dark"] .gdu-stage-band {
+:root[data-theme="dark"] .gdu-stage-band-veg {
   fill: #57b07d;
 }
 
-:root[data-theme="dark"][data-brand="ncPlus"] .gdu-stage-band,
-:root[data-theme="dark"][data-brand="crows"] .gdu-stage-band {
+:root[data-theme="dark"] .gdu-stage-band-rep {
   fill: #e8b451;
 }
 
@@ -679,16 +680,21 @@
   --gdu-stage-base: var(--card-bg);
 }
 
+/* Dark mode now needs this for EVERY brand, not just the cool-carded
+   ones: gold appears in all three Brand Views, and gold alpha-blended
+   over Midwest's dark green desaturates the same way it did over NC+'s
+   blue. A near-neutral very dark base serves both hues — measured at the
+   top of each ramp against #1e1d1b, gold lands at 0.59 saturation and
+   green at 0.43, both unmistakably themselves. A warm brown base would
+   have fixed the gold and muddied the green. */
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme])[data-brand="ncPlus"],
-  :root:not([data-theme])[data-brand="crows"] {
-    --gdu-stage-base: #241f14;
+  :root:not([data-theme]) {
+    --gdu-stage-base: #1e1d1b;
   }
 }
 
-:root[data-theme="dark"][data-brand="ncPlus"],
-:root[data-theme="dark"][data-brand="crows"] {
-  --gdu-stage-base: #241f14;
+:root[data-theme="dark"] {
+  --gdu-stage-base: #1e1d1b;
 }
 
 .gdu-stage-backdrop {
@@ -1240,4 +1246,65 @@ button.gdu-card-toggle:not(.gdu-card-toggle-open) {
   margin-top: 3px;
   font-size: 0.88rem;
   color: var(--text-muted);
+}
+
+/* ---------- heat-cap / cold-floor day markers ---------- */
+
+/* Deliberately NOT the --gdu-hot orange or the --gdu-cool blue: those
+   two are scenario SERIES, and reusing their hues for a per-day
+   condition would say "this stretch belongs to the hot curve", which is
+   the one thing it does not mean. A saturated true red and a deep navy
+   read as annotation rather than data, and both are drawn on top of the
+   near-black season line where they have plenty of contrast. */
+:root {
+  --gdu-limit-capped: #cc1f1f;
+  --gdu-limit-zero: #0b4da2;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --gdu-limit-capped: #ff5a5a;
+    --gdu-limit-zero: #5b9bf0;
+  }
+}
+
+:root[data-theme="dark"] {
+  --gdu-limit-capped: #ff5a5a;
+  --gdu-limit-zero: #5b9bf0;
+}
+
+/* A thin full-height rule per qualifying day, drawn under every curve.
+   1px and translucent on purpose: a hot July puts 40-50 of these on the
+   plot, and at full strength they read as a fence in front of the data
+   instead of shading behind it. */
+.gdu-limit-day {
+  fill: none;
+  stroke-width: 1;
+  stroke-opacity: 0.4;
+}
+
+.gdu-limit-capped {
+  stroke: var(--gdu-limit-capped);
+}
+
+.gdu-limit-zero {
+  stroke: var(--gdu-limit-zero);
+}
+
+/* The swatch mirrors the mark: a vertical tick, not the horizontal bar
+   the series entries use. A legend key that looks like a different mark
+   from the one on the chart is worse than no key. */
+.gdu-legend-swatch-capped,
+.gdu-legend-swatch-zero {
+  width: 3px;
+  height: 14px;
+  border-radius: 1px;
+}
+
+.gdu-legend-swatch-capped {
+  background-color: var(--gdu-limit-capped) !important;
+}
+
+.gdu-legend-swatch-zero {
+  background-color: var(--gdu-limit-zero) !important;
 }

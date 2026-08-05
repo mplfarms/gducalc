@@ -7,7 +7,7 @@
 
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { dailyGdu, percentile, accumulate, envelopeFromCalendarDate, offsetAtTarget, firstFreezeStats, buildDailyIndex, bandMeanTemps, GDU_MAX_PER_DAY } from "../public/js/core/gdu.js";
+import { dailyGdu, percentile, accumulate, envelopeFromCalendarDate, offsetAtTarget, firstFreezeStats, buildDailyIndex, bandTempStats, GDU_MAX_PER_DAY } from "../public/js/core/gdu.js";
 import { addDays, daysBetween, isoForYear, isoToUtcMs, utcMsToIso, monthDayOf, formatShort } from "../public/js/core/dates.js";
 import { buildSeason, baselineYearsFor, SEASON_DAYS } from "../public/js/core/season.js";
 import { STAGE_LADDER, stagesForHybrid, datedStages, REFERENCE_SILK, REFERENCE_BLACK_LAYER } from "../public/js/core/stages.js";
@@ -922,46 +922,63 @@ const tempIndex = buildDailyIndex([
   { time: ["2026-05-01", "2026-05-02", "2026-05-03"], tmax: [80, 90, 70], tmin: [60, 64, 50], source: "observed" },
 ]);
 
-test("band averages are the mean high and the mean low, not one blended mean", () => {
-  const bt = bandMeanTemps(tempIndex, "2026-05-01", 0, 2, addDays);
+test("the reported pair is the hottest day and the warmest night, not averages", () => {
+  const bt = bandTempStats(tempIndex, "2026-05-01", 0, 2, addDays);
   assert.equal(bt.days, 3);
-  assert.equal(bt.avgHigh, (80 + 90 + 70) / 3); // 80
-  assert.equal(bt.avgLow, (60 + 64 + 50) / 3); // 58
-  // The point of keeping them apart: the blended 24-hour mean is 69 for
-  // this band and would read identically for a 95/43 week.
+  // Highs 80/90/70, lows 60/64/50.
+  assert.equal(bt.maxHigh, 90);
+  assert.equal(bt.maxLow, 64);
+  // The means are 80 and 58 - both LOWER than the peaks, which is the
+  // whole point: a single hot day is what does the damage and an average
+  // buries it.
+  assert.equal(bt.avgHigh, 80);
+  assert.equal(bt.avgLow, 58);
+  assert.ok(bt.maxHigh > bt.avgHigh && bt.maxLow > bt.avgLow);
 });
 
-test("band averages use the raw temperature, NOT the GDU-clamped one", () => {
+test("the warmest night is the max of the lows, not the low of the hottest day", () => {
+  // Easy bug: reporting tmin FROM the day with the highest tmax. Here the
+  // hottest day (90) has a 64 low and the coolest day (70) has a 50 low,
+  // so both readings agree - add a day that separates them.
+  const idx = buildDailyIndex([
+    { time: ["2026-07-01", "2026-07-02"], tmax: [98, 84], tmin: [61, 77], source: "observed" },
+  ]);
+  const bt = bandTempStats(idx, "2026-07-01", 0, 1, addDays);
+  assert.equal(bt.maxHigh, 98); // day 1's 98, not day 2's 84
+  assert.equal(bt.maxLow, 77); // day 2's 77, NOT the 61 that came with the 98
+});
+
+test("temperatures are raw, NOT the GDU-clamped ones", () => {
   // 90 F clamps to 86 for GDU purposes. It must not clamp here - this is
   // reporting the weather, not computing development.
-  const bt = bandMeanTemps(tempIndex, "2026-05-02", 0, 0, addDays);
-  assert.equal(bt.avgHigh, 90);
+  const bt = bandTempStats(tempIndex, "2026-05-02", 0, 0, addDays);
+  assert.equal(bt.maxHigh, 90);
 });
 
 test("a band containing any forecast day returns nothing at all", () => {
   // May 4-5 are forecast. Averaging the observed part and printing it
   // under a label that claims the whole stage is the failure mode this
   // guards.
-  assert.equal(bandMeanTemps(tempIndex, "2026-05-01", 0, 3, addDays), null);
-  assert.equal(bandMeanTemps(tempIndex, "2026-05-01", 3, 4, addDays), null);
+  assert.equal(bandTempStats(tempIndex, "2026-05-01", 0, 3, addDays), null);
+  assert.equal(bandTempStats(tempIndex, "2026-05-01", 3, 4, addDays), null);
 });
 
 test("a band running past the end of the data returns nothing", () => {
-  assert.equal(bandMeanTemps(tempIndex, "2026-05-01", 0, 40, addDays), null);
+  assert.equal(bandTempStats(tempIndex, "2026-05-01", 0, 40, addDays), null);
 });
 
 test("a zero-length or reversed band returns nothing", () => {
-  assert.equal(bandMeanTemps(tempIndex, "2026-05-01", 2, 1, addDays), null);
-  assert.equal(bandMeanTemps(tempIndex, "2026-05-01", null, 1, addDays), null);
+  assert.equal(bandTempStats(tempIndex, "2026-05-01", 2, 1, addDays), null);
+  assert.equal(bandTempStats(tempIndex, "2026-05-01", null, 1, addDays), null);
 });
 
 test("a min warmer than the max is still reported as high and low", () => {
   // Defensive, mirroring dailyGdu: a transposed row must not report a
   // low above its high.
   const idx = buildDailyIndex([{ time: ["2026-06-01"], tmax: [55], tmin: [88], source: "observed" }]);
-  const bt = bandMeanTemps(idx, "2026-06-01", 0, 0, addDays);
-  assert.equal(bt.avgHigh, 88);
-  assert.equal(bt.avgLow, 55);
+  const bt = bandTempStats(idx, "2026-06-01", 0, 0, addDays);
+  assert.equal(bt.maxHigh, 88);
+  assert.equal(bt.maxLow, 55);
 });
 
 // ---------------------------------------------------------------
@@ -1004,6 +1021,43 @@ test("the catalog still matches a hybrid once it carries a brand code", () => {
   assert.equal(bareVariety("09-90 PCE"), "09-90 PCE");
   assert.equal(bareVariety("DKC62-08"), "DKC62-08");
   assert.equal(bareVariety("XY 12-34"), "XY 12-34");
+});
+
+// ---------------------------------------------------------------
+console.log("\nheat-cap / cold-floor day classification");
+// ---------------------------------------------------------------
+
+// The chart marks a day red when its high reached the 86 F cap and blue
+// when its low fell to 50 F or below. Those two thresholds are the
+// formula's own limits, so they are pinned here against dailyGdu itself
+// rather than against the drawing code.
+
+test("a day at the cap earns strictly less than the thermometer suggests", () => {
+  // 86/66 and 104/66 are the same GDU: everything past 86 is discarded.
+  // That equality IS the thing the red mark exists to explain.
+  assert.equal(dailyGdu(86, 66), dailyGdu(104, 66));
+  assert.equal(dailyGdu(86, 66), 26);
+});
+
+test("the theoretical maximum needs an 86 F night, which is why it is not the trigger", () => {
+  // A strict "maxed out" reading means 36 GDU, which needs the LOW at 86
+  // too. That essentially never happens in Iowa, so the marker uses the
+  // high hitting the cap instead - documented here so the choice is not
+  // mistaken for a bug later.
+  assert.equal(dailyGdu(86, 86), GDU_MAX_PER_DAY);
+  assert.equal(dailyGdu(98, 70), 28);
+  assert.ok(dailyGdu(98, 70) < GDU_MAX_PER_DAY);
+});
+
+test("a day at or below the floor earns nothing, never a negative", () => {
+  assert.equal(dailyGdu(50, 40), 0);
+  assert.equal(dailyGdu(30, 10), 0);
+});
+
+test("a cold night still leaves the daytime half worth something", () => {
+  // The blue mark says "that half counted zero", not "the day counted
+  // zero" - a 72/45 day still earns 11.
+  assert.equal(dailyGdu(72, 45), 11);
 });
 
 console.log(`\n${passed} assertions passed.\n`);

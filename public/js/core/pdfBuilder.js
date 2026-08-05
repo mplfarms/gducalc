@@ -66,14 +66,20 @@ const SERIES = [
   { key: "current", rgb: [20, 20, 20], width: 2, dash: null, label: "This season" },
 ];
 
+/** Matches --gdu-limit-capped / --gdu-limit-zero in gdu.css. */
+const LIMIT_CAPPED_RGB = [204, 31, 31];
+const LIMIT_ZERO_RGB = [11, 77, 162];
+
 const INK = [22, 36, 28];
 const MUTED = [95, 107, 99];
 const RULE = [214, 214, 214];
 
-/** Stage-ramp hue, mirroring the per-brand rule in gdu.css. */
-function stageRampRgb(brand) {
-  return brand && brand.id !== "midwestSeedGenetics" ? [218, 145, 0] : [47, 125, 79];
-}
+/* The two stage-ramp hues, mirroring .gdu-stage-band-veg / -rep in
+   gdu.css. Green while the plant builds leaves, harvest gold once it is
+   filling grain, split at R1 — the same in every Brand View, because it
+   encodes the crop rather than the label on the bag. */
+const RAMP_VEG_RGB = [47, 125, 79];
+const RAMP_REP_RGB = [218, 145, 0];
 
 function hexToRgb(hex) {
   const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || ""));
@@ -521,6 +527,33 @@ export function buildPdf({ jsPDF, season, hybrid, location, brand, logoDataUrl, 
     }
     dash([]);
 
+    // Heat-cap / cold-floor day rules. Thin vertical lines at full plot
+    // height, drawn BEFORE the series so every curve sits on top of
+    // them. jsPDF has no stroke alpha without a graphics state, so the
+    // colours are alpha-composited against white, which is what the page
+    // is anyway.
+    const limits = { capped: 0, zero: 0 };
+    {
+      const lastObserved = Math.min(season.observedEndOffset, xMax);
+      if (season.index && lastObserved >= 0) {
+        doc.setLineWidth(0.5);
+        dash([]);
+        for (let i = 0; i <= lastObserved; i++) {
+          const rec = season.index[addDays(season.plantingIso, i)];
+          if (!rec || rec.source !== "observed") continue;
+          if (!Number.isFinite(rec.tmax) || !Number.isFinite(rec.tmin)) continue;
+          const hi = Math.max(rec.tmax, rec.tmin);
+          const lo = Math.min(rec.tmax, rec.tmin);
+          if (hi >= 86) limits.capped++;
+          else if (lo <= 50) limits.zero++;
+          else continue;
+          setStroke(overWhite(hi >= 86 ? LIMIT_CAPPED_RGB : LIMIT_ZERO_RGB, 0.4));
+          doc.line(px(i), plot.y, px(i), plot.y + plot.h);
+        }
+        doc.setLineWidth(0.5);
+      }
+    }
+
     // series
     const endLabels = [];
     for (const s of series) {
@@ -572,6 +605,15 @@ export function buildPdf({ jsPDF, season, hybrid, location, brand, logoDataUrl, 
     drawWatermark(plot.x, plot.y, plot.w, plot.h);
     setText(INK);
     y += h + 4;
+
+    // The halo needs a key or it is just a smudge behind the line.
+    if (limits.capped || limits.zero) {
+      const parts = [];
+      if (limits.capped) parts.push(`red = the ${limits.capped} day${limits.capped === 1 ? "" : "s"} the high hit 86 °F, where heat above the cap added nothing`);
+      if (limits.zero) parts.push(`blue = the ${limits.zero} day${limits.zero === 1 ? "" : "s"} the low fell to 50 °F or below, where that half counted zero`);
+      paragraph(`Vertical rules: ${parts.join("; ")}.`, { size: 7, gap: 3 });
+    }
+
     paragraph(
       season.knownEndOffset > season.observedEndOffset
         ? `Solid = observed through ${formatShort(season.lastObservedIso)} plus forecast through ${formatShort(season.lastKnownIso)}. Dashed = projected.`
@@ -692,7 +734,10 @@ export function buildPdf({ jsPDF, season, hybrid, location, brand, logoDataUrl, 
     const maxGdu = stages[stages.length - 1].gdu;
     const yMax = Math.ceil((maxGdu * 1.02) / 100) * 100;
     const py = (g) => plot.y + plot.h - (g / yMax) * plot.h;
-    const ramp = stageRampRgb(brand);
+    const silkIdx = Math.max(
+      0,
+      stages.findIndex((st) => st.key === "silk")
+    );
 
     // y axis
     doc.setFont("helvetica", "normal");
@@ -710,7 +755,13 @@ export function buildPdf({ jsPDF, season, hybrid, location, brand, logoDataUrl, 
       const top = py(to.gdu);
       const bottom = py(from.gdu);
       const bandH = bottom - top;
-      setFill(overWhite(ramp, 0.09 + (i / Math.max(1, bandCount - 1)) * 0.42));
+      // Each half restarts pale, so the gold begins at R1 rather than
+      // continuing the green's climb — the reset is what marks the
+      // switch from vegetative growth to grain fill.
+      const reproductive = silkIdx > 0 && i >= silkIdx;
+      const stepsInHalf = reproductive ? bandCount - silkIdx : silkIdx > 0 ? silkIdx : bandCount;
+      const stepInHalf = reproductive ? i - silkIdx : i;
+      setFill(overWhite(reproductive ? RAMP_REP_RGB : RAMP_VEG_RGB, 0.09 + (stepInHalf / Math.max(1, stepsInHalf - 1)) * 0.42));
       doc.rect(plot.x, top, plot.w, Math.max(bandH, 0.5), "F");
       setStroke([255, 255, 255]);
       doc.setLineWidth(1);
@@ -721,9 +772,9 @@ export function buildPdf({ jsPDF, season, hybrid, location, brand, logoDataUrl, 
       doc.setFont("helvetica", from.anchored ? "bold" : "normal");
       doc.setFontSize(8);
       setText(INK);
-      // Same rule as the on-screen band: average high/low only once the
-      // stage is entirely behind us, blank otherwise.
-      const temps = from.bandTemps ? ` · ${Math.round(from.bandTemps.avgHigh)}°/${Math.round(from.bandTemps.avgLow)}°` : "";
+      // Same rule as the on-screen band: hottest day / warmest night,
+      // and only once the stage is entirely behind us.
+      const temps = from.bandTemps ? ` · ${Math.round(from.bandTemps.maxHigh)}°/${Math.round(from.bandTemps.maxLow)}°` : "";
       const text = `${from.label}${from.iso ? ` (~ ${formatShort(from.iso, { withYear: true })})` : " (not reached)"}${temps}`;
       doc.text(text, plot.x + plot.w / 2, top + bandH / 2 + 3, { align: "center" });
     }

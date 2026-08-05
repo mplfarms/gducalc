@@ -144,6 +144,25 @@ function build(width, { stages, gduToDate, asOfIso }) {
   const bandGroup = svg("g", { class: "gdu-stage-bands" });
   root.appendChild(bandGroup);
 
+  // TWO ramps, split at R1. Green climbs through the vegetative stages,
+  // then gold restarts light at silking and deepens to black layer. The
+  // reset is the point: it puts a visible line at the moment the plant
+  // stops building leaves and starts filling grain, which is the single
+  // most important transition on this chart and previously had nothing
+  // marking it but a date. Same in every Brand View — this encodes the
+  // crop's biology, not the brand.
+  const silkIdx = Math.max(
+    0,
+    stages.findIndex((st) => st.key === "silk")
+  );
+
+  // The "N GDU through <date>" rule is drawn later, but its y has to be
+  // known NOW: it cuts straight through whichever band the crop is
+  // currently in, and that band's centered label lands on top of it.
+  // Left alone the two overprint into an unreadable smear — which is
+  // exactly what happens mid-season, on the one band a rep is looking at.
+  const todayY = Number.isFinite(gduToDate) && gduToDate > 0 ? y(Math.min(gduToDate, yMax)) : null;
+
   for (let i = 0; i < bandCount; i++) {
     const from = stages[i];
     const to = stages[i + 1];
@@ -151,15 +170,19 @@ function build(width, { stages, gduToDate, asOfIso }) {
     const bottom = y(from.gdu);
     const bandH = bottom - top;
 
+    // Each half runs its own light-to-dark alpha schedule, so the gold
+    // starts pale at R1 rather than picking up where the green left off.
+    const reproductive = silkIdx > 0 && i >= silkIdx;
+    const stepsInHalf = reproductive ? bandCount - silkIdx : silkIdx > 0 ? silkIdx : bandCount;
+    const stepInHalf = reproductive ? i - silkIdx : i;
     bandGroup.appendChild(
       svg("rect", {
-        class: "gdu-stage-band",
+        class: `gdu-stage-band ${reproductive ? "gdu-stage-band-rep" : "gdu-stage-band-veg"}`,
         x: margin.left,
         y: top,
         width: plotW,
         height: Math.max(bandH, 1),
-        // Stepped alpha of one hue, low at planting to high at maturity.
-        "fill-opacity": (0.09 + (i / Math.max(1, bandCount - 1)) * 0.42).toFixed(3),
+        "fill-opacity": (0.09 + (stepInHalf / Math.max(1, stepsInHalf - 1)) * 0.42).toFixed(3),
       })
     );
     // A 2px surface-colored rule between bands, so adjacent steps of the
@@ -168,25 +191,39 @@ function build(width, { stages, gduToDate, asOfIso }) {
     root.appendChild(svg("line", { class: "gdu-stage-divider", x1: margin.left, x2: margin.left + plotW, y1: top, y2: top }));
 
     if (bandH < 13) continue; // no room for a label; the Data tab has it
+
+    // If the progress rule splits this band, put the label in whichever
+    // half has more room rather than centering it on the rule. Below 16px
+    // the remaining half is too shallow to clear the rule's own label, so
+    // the band label is dropped instead of drawn into it — the Data card
+    // carries every one of these figures anyway.
+    let labelCenter = bottom - bandH / 2;
+    if (todayY !== null && todayY > top + 1 && todayY < bottom - 1) {
+      const above = todayY - top;
+      const below = bottom - todayY;
+      const room = Math.max(above, below);
+      if (room < 16) continue;
+      labelCenter = above >= below ? top + above / 2 : todayY + below / 2;
+    }
     const dateText = from.iso ? ` (~ ${formatShort(from.iso, { withYear: true })})` : " (not reached)";
-    // Average high/low for the stretch the crop spent in this stage.
-    // Appended to the existing line rather than given one of its own —
-    // the thinnest bands here are barely tall enough for a single line,
-    // and a second line would drop out of exactly the bands a rep is
-    // most likely to be squinting at. Present only when every day in the
-    // span was observed, so a band still in the forecast simply has
-    // nothing after the date, which is the intended reading.
-    const tempText = from.bandTemps ? ` · ${Math.round(from.bandTemps.avgHigh)}°/${Math.round(from.bandTemps.avgLow)}°` : "";
+    // Hottest daytime high / warmest nighttime low for the stretch the
+    // crop spent in this stage. Appended to the existing line rather than
+    // given one of its own — the thinnest bands here are barely tall
+    // enough for a single line, and a second line would drop out of
+    // exactly the bands a rep is most likely to be squinting at. Present
+    // only when every day in the span was observed, so a band still in
+    // the forecast simply has nothing after the date.
+    const tempText = from.bandTemps ? ` · ${Math.round(from.bandTemps.maxHigh)}°/${Math.round(from.bandTemps.maxLow)}°` : "";
     const label = svg("text", {
       class: `gdu-stage-band-label${from.anchored ? " gdu-stage-band-label-anchored" : ""}`,
       x: margin.left + plotW / 2,
-      y: bottom - bandH / 2 + 4,
+      y: labelCenter + 4,
       "text-anchor": "middle",
     });
     label.textContent = `${from.label}${dateText}${tempText}`;
     root.appendChild(label);
     if (from.projected && bandH >= 26) {
-      const sub = svg("text", { class: "gdu-stage-band-sub", x: margin.left + plotW / 2, y: bottom - bandH / 2 + 17, "text-anchor": "middle" });
+      const sub = svg("text", { class: "gdu-stage-band-sub", x: margin.left + plotW / 2, y: labelCenter + 17, "text-anchor": "middle" });
       sub.textContent = "projected";
       root.appendChild(sub);
     }
@@ -209,7 +246,7 @@ function build(width, { stages, gduToDate, asOfIso }) {
   // edges straight through every line of text. Pushing the fill into a
   // narrow gutter keeps the "how far along am I" reading and leaves the
   // labels clean.
-  if (Number.isFinite(gduToDate) && gduToDate > 0) {
+  if (todayY !== null) {
     const capped = Math.min(gduToDate, yMax);
     const gutterW = 14;
     root.appendChild(

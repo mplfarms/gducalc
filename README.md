@@ -1,4 +1,4 @@
-# GDU Calculator v2.5.1 (Beta)
+# GDU Calculator v2.9 (Beta)
 
 A hybrid GDU calculator for corn: set a field location, a planting date, and a
 hybrid (133 built in, or type your own numbers — any one of GDUs to silk, GDUs to
@@ -149,10 +149,10 @@ npm test                  # unit + end-to-end
 npm run shots             # e2e plus screenshots into test/shots/
 ```
 
-* `test/unit_gdu.mjs` — 84 checks on the GDU math, the shipped hybrid catalog, the
+* `test/unit_gdu.mjs` — 89 checks on the GDU math, the shipped hybrid catalog, the
   stage ladder and the rating estimator, all hand-worked from the formulas rather
   than snapshotted from a previous run.
-* `test/e2e_smoke.mjs` — 106 checks driving the real UI in headless Chromium with
+* `test/e2e_smoke.mjs` — 115 checks driving the real UI in headless Chromium with
   every weather/geocode call intercepted and served deterministic synthetic data.
 
 ## How it works
@@ -228,25 +228,96 @@ over.
 the **10th percentile**, not the median — a hybrid that black-layers exactly on
 the median freeze date gets caught one year in two, which is not a pass.
 
+## The stage ramp
+
+The stage bands run **two ramps split at R1**: green climbing through the
+vegetative stages, then harvest gold restarting pale at silking and deepening
+to black layer.
+
+The reset is the point. It puts a visible line at the moment the plant stops
+building leaves and starts filling grain — the single most important transition
+on the chart, which previously had nothing marking it but a date.
+
+**This is no longer per Brand View.** It used to be green for Midwest and gold
+for NC+ and Crow's, on the grounds that green read as a third unrelated brand
+colour against those two. Both hues now appear everywhere, because the split
+encodes the crop's biology and that does not change depending on whose label is
+on the bag.
+
+One consequence: dark mode needs a neutral compositing base for **every** brand
+now, not just the cool-carded ones. Gold alpha-blended over Midwest's dark green
+card desaturates exactly the way it did over NC+'s blue. Measured at the top of
+each ramp against `#1e1d1b`, gold lands at 0.59 saturation and green at 0.43 —
+both unmistakably themselves. A warm brown base (the old NC+/Crow's fix) would
+have rescued the gold and muddied the green.
+
+## Heat-cap and cold-floor days
+
+The accumulation chart marks the days that ran into one of the formula's two
+limits, drawn on this season's line:
+
+* **Red** — the day's high reached the **86 °F cap**. Every degree past it added
+  nothing to development, so the curve is flatter than the thermometer suggests
+  and the plant spent that heat on stress instead. This is the visual answer to
+  "it was blistering all week, why didn't we gain more GDUs".
+* **Blue** — the low fell to **50 °F or below**, so that half of the day counted
+  zero. The day still earns whatever its daytime half was worth.
+
+Drawn as **thin full-height vertical rules**, 1 px and 40% opacity, underneath
+the percentile band and every curve. Two notes on that:
+
+* Translucency is doing real work. A hot July puts 40-50 rules on the plot, and
+  at full strength they read as a fence in front of the data rather than
+  shading behind it.
+* Two earlier renderings were tried and rejected — recolouring the season line
+  (a red "This season" reads as the orange "Abnormally Hot" curve, the exact
+  failure the fixed palette exists to prevent) and a halo behind it (same
+  problem, softened). Vertical rules were chosen deliberately over both.
+
+**Not a strict "maxed out."** The literal reading of red is a full 36 GDU,
+which needs the *low* at 86 °F too — that essentially never happens in Iowa and
+the marker would never appear at all. The trigger is the high hitting the cap,
+which fires 40-60 days in a western-Iowa season.
+
+Observed days only — marking a forecast day red asserts a measurement nobody has
+taken. The legend lists a marker only when it is actually on the chart, with its
+day count and a vertical-tick swatch that matches the mark. The PDF carries the
+same rules and a written key.
+
 ## Stage-band temperatures
 
-Each growth-stage band carries the **average daily high and average daily low**
-across the days the crop spent in that stage — `86°/64°` — with the day count
-beside it in the Data table.
+Each growth-stage band carries the **hottest daytime high and the warmest
+nighttime low** anywhere in that stage — `99°/75°` — with the day count beside
+it in the Data table.
 
-Two deliberate choices:
+Three deliberate choices:
 
-* **Not a single 24-hour mean.** A 78 °F average is a benign 88/68 week, a
-  pollination-scorching 95/61, or an 86/70 stretch of warm nights burning
-  sugars through grain fill. The one number that reads the same for all three
-  is the one that can't help anybody. High and low cost the same screen width.
-* **Observed days only, no partial averages.** `bandMeanTemps()` returns null
-  unless *every* day in the span is observed — one forecast day in the window
-  and the whole band goes blank. A stage the crop is still living through
-  doesn't have an average temperature yet, and averaging the part that has
-  happened would print a number under a label claiming to describe the whole
-  stage. Raw temperatures, not the 50/86 clamped ones: this reports the
+* **Peaks, not averages.** These are the two numbers that explain a yield
+  result. Peak daytime heat is what sterilizes pollen at silking; the warmest
+  nights are what drive respiration to burn sugars off during grain fill, which
+  costs test weight even when the days look ordinary. An average buries both —
+  one 98 °F day in an otherwise mild fortnight barely moves a mean, and that is
+  the day that did the damage. `bandTempStats()` computes the means too and
+  they're available, they're just not what gets shown.
+* **The warmest night is the max of the lows**, not the low that happened to
+  come with the hottest day. Those are different nights more often than not,
+  and a unit test pins the distinction.
+* **Observed days only, never partial.** `bandTempStats()` returns null unless
+  *every* day in the span is observed — one forecast day in the window and the
+  whole band goes blank. A stage the crop is still living through does not yet
+  have a hottest day, and reporting the hottest-day-so-far under a label
+  claiming to describe the whole stage would be a number that silently changes
+  tomorrow. Raw temperatures, not the 50/86 clamped ones: this reports the
   weather, not development.
+
+The stage chart also keeps the **"N GDU through <date>" progress rule clear of
+band labels**. That rule cuts through whichever band the crop is currently in,
+and the band's centered label used to be drawn straight on top of it — an
+unreadable smear on the one band a rep is actually looking at. The label now
+goes in whichever half of the split band has more room, or is dropped if
+neither half clears the rule. An e2e check measures the two bounding boxes for
+intersection, and asserts the rule really does land inside a band so the check
+can't pass vacuously.
 
 ## Brand Views and hybrid naming
 

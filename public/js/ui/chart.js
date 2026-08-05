@@ -38,6 +38,7 @@
 //                     everything else without competing for hue
 
 import { addDays, daysBetween, formatShort } from "../core/dates.js";
+import { GDU_BASE_F, GDU_CAP_F } from "../core/gdu.js";
 
 const SERIES_STYLE = {
   current: { varName: "--gdu-current", width: 3, dash: null, label: "This season" },
@@ -189,6 +190,13 @@ function buildSvg(width, height, season, hybrid, brand) {
     root.appendChild(label);
   }
 
+  // ---- heat-cap / cold-floor day rules --------------------------
+  // Drawn here, before the percentile band and every series, so the
+  // curves always sit on top of them. These are background annotation:
+  // thin, and translucent enough that a run of 50 of them reads as
+  // shading over July rather than as a fence in front of the data.
+  drawLimitDays(root, season, x, margin.top, margin.top + plotH);
+
   // ---- normal-range band ---------------------------------------
   // A soft fill between the 10th and 90th percentile curves. This is
   // the single clearest statement the chart makes: anything inside the
@@ -323,6 +331,45 @@ function buildSvg(width, height, season, hybrid, brand) {
 }
 
 /** Builds an SVG path over [from..to], breaking at nulls. */
+/**
+ * A thin vertical rule on every day that ran into one of the formula's
+ * two limits.
+ *
+ * RED — the day's high reached the 86 °F cap. Every degree past it added
+ * nothing to development, so the curve is flatter than the thermometer
+ * suggests and the plant was spending that heat on stress instead. This
+ * is the visual answer to "it was blistering all week, why didn't we
+ * gain more GDUs".
+ *
+ * BLUE — the low fell to 50 °F or below, so that half of the day counted
+ * zero. The day still earns whatever its daytime half was worth.
+ *
+ * Full plot height and drawn UNDER everything, so the five curves stay
+ * readable across them. Red wins when a day does both.
+ *
+ * OBSERVED DAYS ONLY. The solid line also covers the 16-day forecast,
+ * but marking a forecast day red asserts a measurement nobody has taken.
+ * Same rule as the stage-band temperatures.
+ */
+function drawLimitDays(root, season, x, top, bottom) {
+  const index = season && season.index;
+  const lastObserved = season ? season.observedEndOffset : -1;
+  if (!index || !(lastObserved >= 0)) return;
+
+  const group = svg("g", { class: "gdu-limit-days" });
+  for (let i = 0; i <= lastObserved; i++) {
+    const rec = index[addDays(season.plantingIso, i)];
+    if (!rec || rec.source !== "observed") continue;
+    if (!Number.isFinite(rec.tmax) || !Number.isFinite(rec.tmin)) continue;
+    const hi = Math.max(rec.tmax, rec.tmin);
+    const lo = Math.min(rec.tmax, rec.tmin);
+    const cls = hi >= GDU_CAP_F ? "gdu-limit-capped" : lo <= GDU_BASE_F ? "gdu-limit-zero" : null;
+    if (!cls) continue;
+    group.appendChild(svg("line", { class: `gdu-limit-day ${cls}`, x1: x(i), x2: x(i), y1: top, y2: bottom }));
+  }
+  if (group.childNodes.length) root.appendChild(group);
+}
+
 function pathFor(cum, from, to, x, y) {
   let d = "";
   let pen = false;
@@ -458,6 +505,29 @@ function attachCrosshair(root, ctx) {
  * hue alone is not an acceptable way to establish identity.
  * @returns {HTMLElement}
  */
+/**
+ * How many observed days ran into each limit. Used to decide whether the
+ * legend earns a swatch — a key for a mark that isn't on the chart is
+ * noise, and in a cool year there may be no capped days at all.
+ * @returns {{capped: number, zero: number}}
+ */
+export function limitDayCounts(season) {
+  const out = { capped: 0, zero: 0 };
+  const index = season && season.index;
+  const lastObserved = season ? season.observedEndOffset : -1;
+  if (!index || !(lastObserved >= 1)) return out;
+  for (let i = 1; i <= lastObserved; i++) {
+    const rec = index[addDays(season.plantingIso, i)];
+    if (!rec || rec.source !== "observed") continue;
+    if (!Number.isFinite(rec.tmax) || !Number.isFinite(rec.tmin)) continue;
+    const hi = Math.max(rec.tmax, rec.tmin);
+    const lo = Math.min(rec.tmax, rec.tmin);
+    if (hi >= GDU_CAP_F) out.capped++;
+    else if (lo <= GDU_BASE_F) out.zero++;
+  }
+  return out;
+}
+
 export function buildChartLegend(season) {
   const wrap = document.createElement("div");
   wrap.className = "gdu-legend";
@@ -478,6 +548,24 @@ export function buildChartLegend(season) {
     if (key === "current") swatch.classList.add("gdu-legend-swatch-hero");
     const text = document.createElement("span");
     text.textContent = s.label;
+    item.appendChild(swatch);
+    item.appendChild(text);
+    wrap.appendChild(item);
+  }
+
+  // The two limit markers, listed only when they actually appear.
+  const limits = limitDayCounts(season);
+  for (const [n, cls, label] of [
+    [limits.capped, "gdu-legend-swatch-capped", `Days the high hit ${GDU_CAP_F} °F — heat above it added nothing`],
+    [limits.zero, "gdu-legend-swatch-zero", `Days the low fell to ${GDU_BASE_F} °F or below — that half counted zero`],
+  ]) {
+    if (!n) continue;
+    const item = document.createElement("span");
+    item.className = "gdu-legend-item";
+    const swatch = document.createElement("span");
+    swatch.className = `gdu-legend-swatch gdu-legend-swatch-hero ${cls}`;
+    const text = document.createElement("span");
+    text.textContent = `${label} (${n})`;
     item.appendChild(swatch);
     item.appendChild(text);
     wrap.appendChild(item);

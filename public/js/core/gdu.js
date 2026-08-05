@@ -248,36 +248,43 @@ export function offsetAtTarget(cum, target) {
 }
 
 /**
- * Average daily high and low across a run of days, for the stretch the
- * crop spent in one growth stage.
+ * Temperature summary for the stretch the crop spent in one growth
+ * stage.
+ *
+ * The headline pair the app SHOWS is `maxHigh` / `maxLow` — the hottest
+ * daytime high and the warmest nighttime low anywhere in the span. Those
+ * are the two numbers that explain a yield result. Peak daytime heat is
+ * what sterilizes pollen; the warmest night is what drives respiration
+ * to burn off sugars during grain fill, and a run of 75 °F nights costs
+ * test weight even when the days look ordinary. An AVERAGE hides both —
+ * one 98 °F day in a mild fortnight barely moves a mean, and that day is
+ * precisely the one that did the damage.
+ *
+ * The means are computed and returned too, since they are nearly free
+ * and answer the different question of what the stretch was typically
+ * like.
  *
  * OBSERVED DAYS ONLY. If any day in the span is a forecast day, or is
  * missing from the index at all, this returns null and the caller shows
- * nothing. That is deliberate and it is the whole design of this
- * function: a stage the crop has not finished living through does not
- * have an average temperature yet, and averaging the part that HAS
- * happened would print a number under a label claiming to describe the
- * whole stage. A blank is honest; a partial average dressed as a full
- * one is not.
- *
- * Returns the mean of the daily maxima and the mean of the daily minima
- * rather than a single 24-hour mean, because the single mean hides the
- * two things that matter agronomically: a 78 °F average is a benign
- * 88/68 week, a pollination-scorching 95/61, or a 86/70 stretch of warm
- * nights burning sugars through grain fill.
+ * nothing. A stage the crop has not finished living through does not yet
+ * have a hottest day, and reporting the hottest day SO FAR under a label
+ * claiming to describe the whole stage would be a number that silently
+ * changes tomorrow.
  *
  * @param {Object<string, DayRecord>} index
  * @param {string} startIso the planting date offsets are measured from
  * @param {number} firstOffset first day of the stage, inclusive
  * @param {number} lastOffset last day of the stage, inclusive
  * @param {(iso: string, offset: number) => string} addDaysFn
- * @returns {{avgHigh: number, avgLow: number, days: number}|null}
+ * @returns {{maxHigh: number, maxLow: number, avgHigh: number, avgLow: number, days: number}|null}
  */
-export function bandMeanTemps(index, startIso, firstOffset, lastOffset, addDaysFn) {
+export function bandTempStats(index, startIso, firstOffset, lastOffset, addDaysFn) {
   if (!Number.isFinite(firstOffset) || !Number.isFinite(lastOffset)) return null;
   if (lastOffset < firstOffset) return null;
   let hiSum = 0;
   let loSum = 0;
+  let maxHigh = -Infinity;
+  let maxLow = -Infinity;
   let n = 0;
   for (let i = firstOffset; i <= lastOffset; i++) {
     const rec = index[addDaysFn(startIso, i)];
@@ -287,12 +294,18 @@ export function bandMeanTemps(index, startIso, firstOffset, lastOffset, addDaysF
     // happened" and "is only predicted".
     if (rec.source !== "observed") return null;
     if (!Number.isFinite(rec.tmax) || !Number.isFinite(rec.tmin)) return null;
-    hiSum += Math.max(rec.tmax, rec.tmin);
-    loSum += Math.min(rec.tmax, rec.tmin);
+    // Ordered rather than trusted: a transposed row must not report a
+    // "low" above its "high".
+    const hi = Math.max(rec.tmax, rec.tmin);
+    const lo = Math.min(rec.tmax, rec.tmin);
+    hiSum += hi;
+    loSum += lo;
+    if (hi > maxHigh) maxHigh = hi;
+    if (lo > maxLow) maxLow = lo;
     n++;
   }
   if (n === 0) return null;
-  return { avgHigh: hiSum / n, avgLow: loSum / n, days: n };
+  return { maxHigh, maxLow, avgHigh: hiSum / n, avgLow: loSum / n, days: n };
 }
 
 /**
