@@ -82,8 +82,9 @@ export function render(container) {
   }
 
   const hybrid = hybridCheck.value; // null when no hybrid was entered
+  resetCardState();
   const body = h("main", { className: "screen-body" }, [
-    headerCard(state, hybrid),
+    identityCard(state, hybrid),
     h("section", { className: "card" }, [h("p", { className: "gdu-loading" }, "Loading 30 years of weather for this location…")]),
   ]);
 
@@ -103,10 +104,35 @@ export function render(container) {
   loadAndPaint(container, body, state, hybrid);
 }
 
+/**
+ * The masthead: brand mark, the hybrid, and the field and date under it.
+ *
+ * Deliberately NOT collapsible and deliberately NOT a header bar — it is
+ * the report's identity, the first thing read in a screenshot and the
+ * thing a grower looks at to confirm this is about their field. It
+ * mirrors the plot-summary row in Corn Plot Harvest so the two apps read
+ * as one product.
+ *
+ * No chevron: the row it is modeled on is a navigation target, this is a
+ * title. An arrow that goes nowhere is worse than no arrow.
+ */
+function identityCard(state, hybrid) {
+  const brand = getBrand(brandStore.getState().selectedBrand);
+  const meta = [state.location.label, `Planted ${formatShort(state.plantingIso, { withYear: true })}`, hybrid && hybrid.rm ? `${hybrid.rm} day` : null]
+    .filter(Boolean)
+    .join("  ·  ");
+  return h("section", { className: "card gdu-identity" }, [
+    brand ? h("img", { className: "gdu-identity-logo", src: brand.logo, alt: brand.displayName }) : null,
+    h("div", { className: "gdu-identity-text" }, [
+      h("div", { className: "gdu-identity-title" }, hybrid ? hybrid.label : "GDU Accumulation"),
+      h("div", { className: "gdu-identity-meta" }, meta),
+    ]),
+  ]);
+}
+
 function headerCard(state, hybrid) {
   if (!hybrid) {
-    return h("section", { className: "card" }, [
-      h("h3", { className: "section-header" }, "GDU Accumulation"),
+    return collapsibleCard("details", "Details", [
       h("div", { className: "plot-details-summary-row" }, [
         h("span", { className: "plot-details-summary-label" }, "Field"),
         h("span", { className: "plot-details-summary-value" }, state.location.label),
@@ -123,8 +149,7 @@ function headerCard(state, hybrid) {
       h("button", { type: "button", className: "btn btn-secondary btn-block", onclick: () => navigate("calculator") }, "Add a Hybrid for Stage Dates"),
     ]);
   }
-  return h("section", { className: "card" }, [
-    h("h3", { className: "section-header" }, hybrid.label),
+  return collapsibleCard("details", "Details", [
     h("div", { className: "plot-details-summary-row" }, [
       h("span", { className: "plot-details-summary-label" }, "Field"),
       h("span", { className: "plot-details-summary-value" }, state.location.label),
@@ -229,19 +254,117 @@ async function loadAndPaint(container, body, state, hybrid) {
     scenarioLabel: forShare ? (season.rows.find((r) => r.key === forShare.key) || {}).label || "Normal" : null,
   };
 
-  const cards = [];
+  // Order is the reading order of the report: what the hybrid is, where
+  // the season stands, the curve, where the crop IS, then the tables and
+  // caveats. Growth Stages sits ABOVE Predicted Stage Dates because
+  // "where is my corn right now" is the question a rep is actually asked
+  // in a field; the date table is what they check afterwards.
+  const cards = [headerCard(state, hybrid)];
   const status = statusCard(season, state, res);
   if (status) cards.push(status);
   cards.push(chartCard(season, hybrid));
   // Everything below needs a hybrid's two GDU ratings to mean anything.
   if (hybrid) {
-    cards.push(tableCard(season, hybrid));
-    cards.push(stageSection(season, hybrid));
+    const stageParts = stageSection(season, hybrid);
+    cards.push(stageParts.stages, tableCard(season, hybrid), stageParts.data);
   }
   cards.push(frostCard(season, hybrid));
   cards.push(methodCard(season, res, state, hybrid));
 
   replaceTail(body, cards);
+}
+
+// ---------------------------------------------------------------
+// Collapsible cards
+// ---------------------------------------------------------------
+//
+// Every result card folds. The screen is one long scrollable report and
+// most of it is reference material a rep already knows — what they want
+// on arrival is where the season stands, the curve, and where the crop
+// is. Everything else is there when asked for.
+//
+// Open/closed state lives here at module scope, NOT in localStorage.
+// Changing the scenario rebuilds every card, and a user who opened Data
+// to read it should not have it slam shut underneath them. But it is
+// also a per-visit view state, not a setting: coming back to the screen
+// starts from the defaults again, so a screenshot taken tomorrow looks
+// like the one taken today.
+const CARD_DEFAULT_OPEN = {
+  details: false,
+  status: true,
+  chart: true,
+  stages: true,
+  table: false,
+  data: false,
+  frost: false,
+  method: false,
+};
+
+/** @type {Object<string, boolean>} */
+let cardOpen = { ...CARD_DEFAULT_OPEN };
+
+function resetCardState() {
+  cardOpen = { ...CARD_DEFAULT_OPEN };
+}
+
+/**
+ * A card whose header bar toggles its body.
+ *
+ * The whole header is the control — a 44px-tall bar is a far better
+ * target than a chevron glyph, and it means the affordance is the thing
+ * people already read. The chevron is drawn as an SVG that rotates, so
+ * it never depends on a font shipping a particular arrow.
+ *
+ * @param {string} key stable id used to remember open/closed across a rebuild
+ * @param {string} title
+ * @param {Array} children card body
+ * @param {{className?: string}} [opts]
+ */
+function collapsibleCard(key, title, children, opts = {}) {
+  const open = cardOpen[key] !== false;
+  const bodyId = `gdu-card-${key}`;
+  const body = h("div", { className: "gdu-card-body", id: bodyId }, children);
+  body.hidden = !open;
+
+  const chevron = svgChevron();
+  const header = h(
+    "button",
+    {
+      type: "button",
+      className: "section-header gdu-card-toggle",
+      "aria-expanded": open ? "true" : "false",
+      "aria-controls": bodyId,
+      onclick: () => {
+        const nowOpen = body.hidden;
+        body.hidden = !nowOpen;
+        cardOpen[key] = nowOpen;
+        header.setAttribute("aria-expanded", nowOpen ? "true" : "false");
+        header.classList.toggle("gdu-card-toggle-open", nowOpen);
+      },
+    },
+    [h("span", { className: "gdu-card-title" }, title), chevron]
+  );
+  if (open) header.classList.add("gdu-card-toggle-open");
+
+  return h("section", { className: `card${opts.className ? ` ${opts.className}` : ""}` }, [header, body]);
+}
+
+function svgChevron() {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("class", "gdu-card-chevron");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
+  const path = document.createElementNS(ns, "path");
+  path.setAttribute("d", "M6 9l6 6 6-6");
+  path.setAttribute("fill", "none");
+  path.setAttribute("stroke", "currentColor");
+  path.setAttribute("stroke-width", "2.4");
+  path.setAttribute("stroke-linecap", "round");
+  path.setAttribute("stroke-linejoin", "round");
+  svg.appendChild(path);
+  return svg;
 }
 
 /** Swaps everything after the header card for `nodes`. */
@@ -267,8 +390,7 @@ function statusCard(season, state, res) {
   // August days (~24 GDU) not May days (~14).
   const daysEquivalent = gapInDays(season, vs);
 
-  return h("section", { className: "card" }, [
-    h("h3", { className: "section-header" }, "Where This Season Stands"),
+  return collapsibleCard("status", "Where This Season Stands", [
     h("div", { className: "summary-stats" }, [
       stat(Math.round(season.gduToDate).toLocaleString(), "GDU accumulated"),
       stat(vsText, vsLabel),
@@ -312,8 +434,7 @@ function stat(value, label) {
 // ---------------------------------------------------------------
 function chartCard(season, hybrid) {
   const holder = h("div", { className: "gdu-chart-holder" });
-  const card = h("section", { className: "card" }, [
-    h("h3", { className: "section-header" }, "GDU Accumulation"),
+  const card = collapsibleCard("chart", "GDU Accumulation", [
     holder,
     buildChartLegend(season),
     h(
@@ -366,8 +487,7 @@ function tableCard(season, hybrid) {
     );
   }
 
-  return h("section", { className: "card" }, [
-    h("h3", { className: "section-header" }, "Predicted Stage Dates"),
+  return collapsibleCard("table", "Predicted Stage Dates", [
     h("div", { className: "gdu-table-wrap" }, [
       h("table", { className: "gdu-table" }, [
         h("thead", {}, h("tr", {}, [h("th", {}, "Scenario"), h("th", {}, `Silk (${hybrid.gduToSilk.toLocaleString()})`), h("th", {}, `Black layer (${hybrid.gduToBlackLayer.toLocaleString()})`)])),
@@ -480,8 +600,7 @@ function frostCard(season, hybrid) {
   const kf = season.killingFreeze;
   const lf = season.lightFrost;
   if (!kf.medianMonthDay) {
-    return h("section", { className: "card" }, [
-      h("h3", { className: "section-header" }, "Frost Risk"),
+    return collapsibleCard("frost", "Frost Risk", [
       h("p", {}, "No 28 °F freeze appears in this location's 30-year record after August 1, so a killing freeze isn't the limiting factor here."),
     ]);
   }
@@ -497,8 +616,7 @@ function frostCard(season, hybrid) {
   // the dates stand on their own — which is still useful: "when does
   // this ZIP usually freeze" is a real question.
   if (!hybrid) {
-    return h("section", { className: "card" }, [
-      h("h3", { className: "section-header" }, "Frost Risk"),
+    return collapsibleCard("frost", "Frost Risk", [
       h("div", { className: "summary-stats" }, [
         stat(formatShort(killEarlyIso), "28 °F by this date 1 yr in 10"),
         stat(formatShort(killMedianIso), "median 28 °F freeze"),
@@ -553,8 +671,7 @@ function frostCard(season, hybrid) {
     }
   }
 
-  return h("section", { className: "card" }, [
-    h("h3", { className: "section-header" }, "Frost Risk"),
+  return collapsibleCard("frost", "Frost Risk", [
     h("div", { className: "summary-stats" }, [
       stat(formatShort(killEarlyIso), "28 °F by this date 1 yr in 10"),
       stat(formatShort(killMedianIso), "median 28 °F freeze"),
@@ -681,16 +798,27 @@ export function formatBandTemps(bt) {
  * changing scenario can't re-run the weather fetch or lose scroll
  * position.
  */
+/**
+ * Growth Stages and Data are driven by the same scenario picker — change
+ * it and both must repaint together or the table would disagree with the
+ * chart. They are NOT adjacent on screen, though: Predicted Stage Dates
+ * sits between them. So this hands back two separate holders that share
+ * one repaint, and the caller places them where they belong.
+ *
+ * @returns {{stages: HTMLElement, data: HTMLElement}}
+ */
 function stageSection(season, hybrid) {
-  const holder = h("div", { className: "gdu-stage-section" });
+  const stages = h("div", { className: "gdu-stage-section" });
+  const data = h("div", { className: "gdu-data-section" });
   function paint() {
     destroyCharts();
-    holder.textContent = "";
-    holder.appendChild(stagesCard(season, hybrid, paint));
-    holder.appendChild(dataCard(season, hybrid));
+    stages.textContent = "";
+    data.textContent = "";
+    stages.appendChild(stagesCard(season, hybrid, paint));
+    data.appendChild(dataCard(season, hybrid));
   }
   paint();
-  return holder;
+  return { stages, data };
 }
 
 function stagesCard(season, hybrid, repaint) {
@@ -698,8 +826,7 @@ function stagesCard(season, hybrid, repaint) {
   const holder = h("div", { className: "gdu-stage-chart-holder" });
   const now = currentStage(dated, season.gduToDate);
 
-  const card = h("section", { className: "card" }, [
-    h("h3", { className: "section-header" }, "Growth Stages"),
+  const card = collapsibleCard("stages", "Growth Stages", [
     scenarioPicker(season, repaint),
     now
       ? h("p", { className: "gdu-stage-now" }, [
@@ -766,8 +893,7 @@ function dataCard(season, hybrid) {
     ]);
   });
 
-  return h("section", { className: "card" }, [
-    h("h3", { className: "section-header" }, "Data"),
+  return collapsibleCard("data", "Data", [
     h("div", { className: "gdu-table-wrap" }, [
       h("table", { className: "gdu-table gdu-data-table" }, [
         h(
@@ -797,8 +923,7 @@ function dataCard(season, hybrid) {
 function methodCard(season, res, state, hybrid) {
   const yrs = season.yearsUsed;
   const yearRange = yrs.length ? `${yrs[0]}–${yrs[yrs.length - 1]}` : "—";
-  return h("section", { className: "card" }, [
-    h("h3", { className: "section-header" }, "How These Numbers Were Made"),
+  return collapsibleCard("method", "How These Numbers Were Made", [
     h("ul", { className: "gdu-method-list" }, [
       h("li", {}, "GDU = (min(daily high, 86 °F) + max(daily low, 50 °F)) ÷ 2 − 50, the modified base-50/86 method US seed companies rate hybrids on. A day below 50 °F counts 0, never a negative; heat above 86 °F adds nothing."),
       h("li", {}, "Accumulation starts on the planting date itself."),

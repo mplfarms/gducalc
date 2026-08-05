@@ -160,6 +160,21 @@ async function main() {
     }
   };
 
+  // Every result card folds, and most default shut. Tests that read a
+  // card's contents open everything first; the DEFAULTS themselves are
+  // asserted once, on the first results render, before this is called.
+  const expandAllCards = async () => {
+    await page.waitForSelector(".gdu-card-toggle");
+    // Loop rather than click-all-at-once: clicking an already-open card
+    // would close it.
+    for (let i = 0; i < 20; i++) {
+      const shut = await page.locator(".gdu-card-toggle:not(.gdu-card-toggle-open)").count();
+      if (shut === 0) break;
+      await page.locator(".gdu-card-toggle:not(.gdu-card-toggle-open)").first().click();
+    }
+    await page.waitForFunction(() => document.querySelectorAll(".gdu-card-toggle:not(.gdu-card-toggle-open)").length === 0);
+  };
+
   // ---- brand select ------------------------------------------------
   await page.goto(base + "/", { waitUntil: "networkidle" });
   await page.waitForSelector(".brand-select-screen");
@@ -423,6 +438,8 @@ async function main() {
   await page.fill('input[aria-label="Relative maturity"]', "105");
   await page.waitForTimeout(100);
   await page.getByRole("button", { name: "Calculate GDUs" }).click();
+  await page.waitForSelector(".gdu-card-toggle", { timeout: 20000 });
+  await expandAllCards();
   await page.waitForSelector(".gdu-table", { timeout: 20000 });
   const bannerCount = await page.locator(".gdu-estimate-banner").count();
   check("an RM-only calculation runs and says its ratings were estimated", () => assert.equal(bannerCount, 1));
@@ -456,8 +473,104 @@ async function main() {
 
   // ---- results -----------------------------------------------------
   await page.getByRole("button", { name: "Calculate GDUs" }).click();
+  await page.waitForSelector(".gdu-chart-svg", { timeout: 20000 });
+
+  // ---- masthead ------------------------------------------------------
+  const identity = await page.evaluate(() => {
+    const card = document.querySelector(".gdu-identity");
+    if (!card) return null;
+    const img = card.querySelector("img.gdu-identity-logo");
+    return {
+      first: document.querySelector(".screen-body").firstElementChild === card,
+      logo: img ? img.getAttribute("src") : null,
+      title: card.querySelector(".gdu-identity-title").textContent,
+      meta: card.querySelector(".gdu-identity-meta").textContent,
+      collapsible: !!card.querySelector(".gdu-card-toggle"),
+    };
+  });
+  check("the report opens with a brand masthead naming the hybrid", () => {
+    assert.ok(identity, "no identity card");
+    assert.equal(identity.first, true, "masthead should be the first card");
+    assert.equal(identity.logo, "/logos/ncplus.png");
+    assert.equal(identity.title, "NC 09-90 PCE");
+    assert.match(identity.meta, /Missouri Valley/);
+    assert.match(identity.meta, /Planted/);
+    assert.match(identity.meta, /109 day/);
+  });
+  check("the masthead is not itself collapsible", () => assert.equal(identity.collapsible, false));
+
+  // ---- card order and default open/closed state ------------------------
+  const cardState = await page.evaluate(() =>
+    [...document.querySelectorAll(".gdu-card-body")].map((b) => ({
+      key: b.id.replace("gdu-card-", ""),
+      open: !b.hidden,
+      title: b.parentElement.querySelector(".gdu-card-title").textContent,
+    }))
+  );
+  check("Growth Stages sits above Predicted Stage Dates", () => {
+    const order = cardState.map((c) => c.key);
+    assert.ok(order.indexOf("stages") < order.indexOf("table"), `order was ${JSON.stringify(order)}`);
+    assert.ok(order.indexOf("table") < order.indexOf("data"), "Data belongs after the date table");
+  });
+  check("cards open to the intended defaults", () => {
+    // Arriving on the screen you get the three things you came for and
+    // nothing else; the reference material is one tap away.
+    assert.deepEqual(
+      cardState.map((c) => [c.key, c.open]),
+      [
+        ["details", false],
+        ["status", true],
+        ["chart", true],
+        ["stages", true],
+        ["table", false],
+        ["data", false],
+        ["frost", false],
+        ["method", false],
+      ]
+    );
+  });
+  check("the first card is titled Details, not the hybrid name", () => {
+    assert.equal(cardState[0].title, "Details");
+  });
+  if (SHOTS) await page.screenshot({ path: path.join(SHOT_DIR, "17-results-default.png"), fullPage: true });
+
+  // Every header is a real button reporting its own state.
+  const toggleA11y = await page.evaluate(() =>
+    [...document.querySelectorAll(".gdu-card-toggle")].map((t) => ({
+      tag: t.tagName,
+      expanded: t.getAttribute("aria-expanded"),
+      controls: t.getAttribute("aria-controls"),
+      chevron: !!t.querySelector(".gdu-card-chevron"),
+      h: Math.round(t.getBoundingClientRect().height),
+    }))
+  );
+  check("every card header is a button with a chevron and a 44px target", () => {
+    assert.equal(toggleA11y.length, 8);
+    for (const t of toggleA11y) {
+      assert.equal(t.tag, "BUTTON");
+      assert.ok(t.chevron, "missing chevron");
+      assert.ok(["true", "false"].includes(t.expanded));
+      assert.ok(t.h >= 44, `header only ${t.h}px tall`);
+      assert.ok(t.controls, "header must name the body it controls");
+    }
+  });
+
+  // Toggling has to actually work, and update its own aria state.
+  await page.locator("#gdu-card-frost").evaluate((el) => el.scrollIntoView());
+  const frostToggle = page.locator('.gdu-card-toggle[aria-controls="gdu-card-frost"]');
+  await frostToggle.click();
+  await page.waitForFunction(() => document.querySelector("#gdu-card-frost").hidden === false);
+  const afterOpen = await frostToggle.getAttribute("aria-expanded");
+  await frostToggle.click();
+  await page.waitForFunction(() => document.querySelector("#gdu-card-frost").hidden === true);
+  const afterClose = await frostToggle.getAttribute("aria-expanded");
+  check("a header toggles its card and reports the new state", () => {
+    assert.equal(afterOpen, "true");
+    assert.equal(afterClose, "false");
+  });
+
+  await expandAllCards();
   await page.waitForSelector(".gdu-table", { timeout: 20000 });
-  await page.waitForSelector(".gdu-chart-svg");
 
   // One collapsed "this season" row + 4 whole-season comparison rows.
   // The three finishes used to be three rows; they shared every observed
@@ -710,6 +823,31 @@ async function main() {
   check("the plain-text summary is still built for the share sheet", () => assert.equal(summaryText, "present"));
 
   // ---- print layout ---------------------------------------------------
+  // A folded card must still PRINT. Collapsing is a screen convenience;
+  // a printout that silently dropped the frost risk because someone left
+  // that card shut would be worse than no printout. Collapse everything
+  // first, so this measures the case that actually matters.
+  await page.evaluate(() => {
+    for (const t of document.querySelectorAll(".gdu-card-toggle.gdu-card-toggle-open")) t.click();
+  });
+  await page.waitForFunction(() => document.querySelectorAll(".gdu-card-body:not([hidden])").length === 0);
+  await page.emulateMedia({ media: "print" });
+  const printCollapsed = await page.evaluate(() => {
+    const bodies = [...document.querySelectorAll(".gdu-card-body")];
+    return {
+      total: bodies.length,
+      stillHidden: bodies.filter((b) => getComputedStyle(b).display === "none").length,
+      chevronsShown: [...document.querySelectorAll(".gdu-card-chevron")].filter((c) => getComputedStyle(c).display !== "none").length,
+      text: document.querySelector(".screen-body").innerText.length,
+    };
+  });
+  check("collapsed cards still print in full", () => {
+    assert.equal(printCollapsed.total, 8);
+    assert.equal(printCollapsed.stillHidden, 0, "a folded card would have been omitted from the printout");
+  });
+  check("print drops the chevrons — nothing to tap on paper", () => assert.equal(printCollapsed.chevronsShown, 0));
+  await page.emulateMedia({ media: "screen" });
+  await expandAllCards();
   await page.emulateMedia({ media: "print" });
   const printState = await page.evaluate(() => {
     const vis = (sel) => {
@@ -793,6 +931,8 @@ async function main() {
   await page.fill('input[aria-label="GDUs to black layer"]', "3400");
   await page.waitForTimeout(150);
   await page.getByRole("button", { name: "Calculate GDUs" }).click();
+  await page.waitForSelector(".gdu-card-toggle", { timeout: 20000 });
+  await expandAllCards();
   await page.waitForSelector(".gdu-table", { timeout: 20000 });
   const projectedRow = await page.locator("tr.gdu-row-current").textContent();
   check("a projected stage shows the hot-to-cool range, not a bare date", () => {

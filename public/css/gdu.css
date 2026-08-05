@@ -978,6 +978,23 @@
     min-height: 0;
   }
 
+  /* A folded card must still PRINT. Collapsing is a screen convenience;
+     a printed report that silently omitted the frost risk because
+     somebody left it shut would be worse than no report. The chevron
+     goes, since a printed arrow suggests something to tap. */
+  .gdu-card-body[hidden] {
+    display: block !important;
+  }
+
+  .gdu-card-chevron {
+    display: none !important;
+  }
+
+  button.gdu-card-toggle:not(.gdu-card-toggle-open) {
+    margin-bottom: 14px;
+    border-radius: 14px 14px 0 0;
+  }
+
   /* Chrome and controls: not printable, and their absence is what makes
      the page read as a report rather than a screenshot of an app. */
   .top-bar,
@@ -1134,4 +1151,90 @@ select.text-input {
 .gdu-hybrid-actions .btn {
   flex: 1;
   margin-top: 4px;
+}
+
+/* ---------- collapsible result cards ---------- */
+
+/* The whole header bar is the button. A 44px bar is a far better target
+   than a chevron glyph, and it makes the affordance the thing people
+   already read. Inherits .section-header's fill, radius and negative
+   margins, so a folded card looks identical to an unfolded one apart
+   from the arrow. */
+button.section-header.gdu-card-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: calc(100% + 32px);
+  min-height: 44px;
+  text-align: left;
+  border: none;
+  font: inherit;
+  font-weight: 700;
+  font-size: 0.95rem;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+/* Collapsed, the bar IS the card — so its bottom corners round off too,
+   otherwise a folded card ends in a square-cornered block sitting on a
+   rounded white sliver. */
+button.gdu-card-toggle:not(.gdu-card-toggle-open) {
+  margin-bottom: -16px;
+  border-radius: 14px;
+}
+
+.gdu-card-title {
+  min-width: 0;
+}
+
+.gdu-card-chevron {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  transform: rotate(-90deg);
+  transition: transform 140ms ease;
+}
+
+.gdu-card-toggle-open .gdu-card-chevron {
+  transform: rotate(0deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gdu-card-chevron {
+    transition: none;
+  }
+}
+
+/* ---------- identity masthead ---------- */
+
+.gdu-identity {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.gdu-identity-logo {
+  flex-shrink: 0;
+  width: 66px;
+  height: 44px;
+  object-fit: contain;
+}
+
+.gdu-identity-text {
+  min-width: 0;
+}
+
+.gdu-identity-title {
+  font-size: 1.28rem;
+  font-weight: 800;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.gdu-identity-meta {
+  margin-top: 3px;
+  font-size: 0.88rem;
+  color: var(--text-muted);
 }

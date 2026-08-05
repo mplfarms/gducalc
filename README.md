@@ -1,4 +1,4 @@
-# GDU Calculator v2.4.1 (Beta)
+# GDU Calculator v2.5 (Beta)
 
 A hybrid GDU calculator for corn: set a field location, a planting date, and a
 hybrid (133 built in, or type your own numbers — any one of GDUs to silk, GDUs to
@@ -20,18 +20,49 @@ with no stage predictions attached. Sections that need a silk or black-layer
 rating (Predicted Stage Dates, Growth Stages, Data) are omitted rather than
 filled with guesses, and the PDF collapses to match.
 
-The results screen is one scrollable report — nothing behind a tab, so a single
-screenshot carries the whole answer:
+The results screen opens with a **masthead** — brand mark, the hybrid, and the
+field and planting date beneath it — then a stack of **collapsible cards**. Each
+card's header bar is the toggle, with a chevron on the right; the whole 44px bar
+is the target, not just the arrow.
 
-1. **Where this season stands** — GDU to date, ahead/behind normal, days in
-2. **GDU Accumulation** — five scenario curves against the hybrid's silk and
-   black-layer thresholds, with a shaded 10th-to-90th percentile band
-3. **Predicted Stage Dates** — silk and black layer under every scenario
-4. **Growth Stages** — the full stage ladder stacked on a GDU axis, each band
-   dated, with a marker for where the crop is right now
-5. **Data** — every stage against every scenario
-6. **Frost Risk** — early/median freeze dates and a verdict
-7. **How these numbers were made** — method and provenance
+Defaults are chosen so arriving on the screen gives you the three things you
+came for and nothing else. Everything else is one tap away:
+
+| # | Card | Default |
+|---|---|---|
+| 1 | **Details** — hybrid ratings and their provenance | collapsed |
+| 2 | **Where This Season Stands** — GDU to date, ahead/behind normal, days in | **open** |
+| 3 | **GDU Accumulation** — five scenario curves against the hybrid's silk and black-layer thresholds, with a shaded 10th-to-90th percentile band | **open** |
+| 4 | **Growth Stages** — the full stage ladder stacked on a GDU axis, each band dated, with a marker for where the crop is right now | **open** |
+| 5 | **Predicted Stage Dates** — silk and black layer under every scenario | collapsed |
+| 6 | **Data** — every stage against every scenario | collapsed |
+| 7 | **Frost Risk** — early/median freeze dates and a verdict | collapsed |
+| 8 | **How These Numbers Were Made** — method and provenance | collapsed |
+
+Growth Stages sits **above** Predicted Stage Dates: "where is my corn right now"
+is the question a rep gets asked in a field, and the date table is what gets
+checked afterwards.
+
+Open/closed state lives in module scope, not localStorage. Changing the scenario
+rebuilds every card, and a card someone opened to read should not slam shut
+underneath them — but it is per-visit view state, not a setting, so returning to
+the screen starts from these defaults again.
+
+**Collapsed cards still print in full.** Folding is a screen convenience; a
+printout that silently dropped the frost risk because that card was left shut
+would be worse than no printout. A `@media print` rule forces every card body
+visible and hides the chevrons, and an e2e check collapses everything before
+measuring the print layout.
+
+**The PDF keeps the older order** — Predicted Stage Dates *before* Growth Stages
+— and that divergence is deliberate. On screen the cards collapse and you
+scroll, so order decides what you see first. On paper everything is visible at
+once, so order buys almost nothing, and putting the 416 pt stage block first
+leaves a third of sheet one empty and spills onto a third sheet. Measured: to
+fit two sheets in the screen's order the stage chart has to come down from
+380 pt to 240 pt, which at fifteen bands drops several below the 9 pt floor
+where their label stops being drawn at all. Losing stage names on a grower's
+printout to buy a section swap nobody can perceive is a bad trade.
 
 A share button sits left of the Settings gear on the results screen. **One tap,
 one outcome**: it builds a two-page branded report (`core/pdfBuilder.js`) and
@@ -121,7 +152,7 @@ npm run shots             # e2e plus screenshots into test/shots/
 * `test/unit_gdu.mjs` — 84 checks on the GDU math, the shipped hybrid catalog, the
   stage ladder and the rating estimator, all hand-worked from the formulas rather
   than snapshotted from a previous run.
-* `test/e2e_smoke.mjs` — 96 checks driving the real UI in headless Chromium with
+* `test/e2e_smoke.mjs` — 105 checks driving the real UI in headless Chromium with
   every weather/geocode call intercepted and served deterministic synthetic data.
 
 ## How it works

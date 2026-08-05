@@ -299,6 +299,19 @@ export function buildPdf({ jsPDF, season, hybrid, location, brand, logoDataUrl, 
   drawAccumulationChart();
 
   // ---- predicted stage dates --------------------------------------
+  // NOTE: this sits BEFORE Growth Stages here, which is the opposite of
+  // the on-screen order, and that is deliberate.
+  //
+  // On screen the cards collapse and you scroll, so order decides what
+  // you see first — Growth Stages belongs on top. On paper everything is
+  // visible at once, so order buys almost nothing, and putting the 416pt
+  // stage block first leaves a third of sheet one empty and spills the
+  // report onto a third sheet. Measured: to fit two sheets in the
+  // screen's order the stage chart has to come down from 380pt to 240pt,
+  // which at fifteen bands drops several of them below the 9pt floor
+  // where their label stops being drawn at all. A grower holding the
+  // printout would lose stage names to buy a section swap they cannot
+  // perceive. Two full sheets with every band labeled wins.
   if (hybrid) {
     sectionHeader("Predicted Stage Dates");
     drawScenarioTable();
