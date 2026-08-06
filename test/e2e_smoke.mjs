@@ -1302,6 +1302,21 @@ async function main() {
   await page.fill('input[aria-label="GDUs to black layer"]', "");
   await page.waitForTimeout(120);
   await page.locator(".gdu-saved-load").first().click();
+  // Tapping a saved location is a request for its answer, so it runs
+  // straight through to the results rather than repainting the form.
+  await page.waitForSelector(".gdu-chart-svg", { timeout: 20000 });
+  const wentStraightToResults = await page.evaluate(() => ({
+    hash: window.location.hash,
+    title: document.querySelector(".gdu-identity-title").textContent,
+    meta: document.querySelector(".gdu-identity-meta").textContent,
+  }));
+  check("tapping a saved location calculates immediately", () => {
+    assert.match(wentStraightToResults.hash, /#\/results/);
+    assert.match(wentStraightToResults.meta, /Missouri Valley/);
+  });
+
+  await page.evaluate(() => { window.location.hash = "#/calculator"; });
+  await page.waitForSelector('input[aria-label="Location name"]');
   await page.waitForTimeout(200);
   const restored = await page.evaluate(() => ({
     name: document.querySelector('input[aria-label="Location name"]').value,
@@ -1321,6 +1336,44 @@ async function main() {
   check("loading an entry that has a hybrid switches back to Enter Hybrid", () => {
     assert.deepEqual(restored.mode, ["true", "false"]);
   });
+
+  // An entry that cannot run must NOT navigate. The migrated
+  // hybrid-only rows have no field or date of their own, and a saved
+  // location whose date got cleared is the same case.
+  await page.evaluate(() => {
+    const saved = JSON.parse(localStorage.getItem("gdu.savedLocations") || "[]");
+    saved.push({ id: "legacy-test", name: "Old saved hybrid", location: null, plantingIso: null, hybrid: { brand: "", name: "LEGACY-1", gduToSilk: 1200, gduToBlackLayer: 2500, rm: 100 } });
+    localStorage.setItem("gdu.savedLocations", JSON.stringify(saved));
+    localStorage.removeItem("gdu.plantingDate");
+  });
+  await page.reload({ waitUntil: "networkidle" });
+  await page.waitForSelector(".gdu-saved-row");
+  const legacyRow = page.locator(".gdu-saved-row", { hasText: "Old saved hybrid" }).locator(".gdu-saved-load");
+  const legacyText = await legacyRow.textContent();
+  check("a migrated hybrid-only row says so instead of showing blanks", () => {
+    assert.match(legacyText, /hybrid only/i);
+  });
+  await legacyRow.click();
+  await page.waitForSelector(".toast-message");
+  const legacyToast = await page.locator(".toast-message").first().textContent();
+  check("an entry with no field or date loads but does not calculate", () => {
+    assert.match(legacyToast, /Add a ZIP and a planting date/i);
+    assert.ok(!page.url().includes("#/results"), "should have stayed on the form");
+  });
+  const legacyLoaded = await page.inputValue('input[aria-label="Hybrid name"]');
+  check("its hybrid still loads exactly as it used to", () => assert.equal(legacyLoaded, "LEGACY-1"));
+
+  // Put the planting date back for everything below.
+  await page.evaluate(() => {
+    const year = new Date().getFullYear();
+    localStorage.setItem("gdu.plantingDate", JSON.stringify(`${year}-05-01`));
+    const saved = JSON.parse(localStorage.getItem("gdu.savedLocations") || "[]");
+    localStorage.setItem("gdu.savedLocations", JSON.stringify(saved.filter((x) => x.id !== "legacy-test")));
+  });
+  await page.reload({ waitUntil: "networkidle" });
+  await page.waitForSelector(".gdu-mode-btn");
+  if (await page.locator(".gdu-hybrid-body").isHidden()) await page.getByRole("button", { name: "Enter Hybrid" }).click();
+  await pickFromList("09-90", 1);
 
   // ---- GDU Only ---------------------------------------------------------
   // The mode is a decision, not a setting: picking it clears the hybrid,

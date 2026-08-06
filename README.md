@@ -1,4 +1,4 @@
-# GDU Calculator v3.1 (Beta)
+# GDU Calculator v3.2 (Beta)
 
 A hybrid GDU calculator for corn: set a field location, a planting date, and a
 hybrid (133 built in, or type your own numbers — any one of GDUs to silk, GDUs to
@@ -40,6 +40,12 @@ the collapsible hybrid body on purpose: burying the button inside a section that
 folds shut in GDU-only mode would have made a location impossible to save
 without a hybrid. Each saved row shows the name on top and the field, date and
 hybrid beneath it.
+
+**Tapping a saved row calculates.** It is a request for that field's answer,
+not a request to look at the form again, so it loads and goes straight to the
+results. It applies the same guards the Calculate button does: an entry with no
+field or planting date loads its values and says what is missing rather than
+navigating to a screen that can only report the same thing less clearly.
 
 Entries from the old saved-hybrids list are **migrated, not dropped** — each
 becomes an entry carrying only its hybrid, which loads exactly as it used to and
@@ -198,7 +204,7 @@ npm run shots             # e2e plus screenshots into test/shots/
 * `test/unit_gdu.mjs` — 92 checks on the GDU math, the shipped hybrid catalog, the
   stage ladder and the rating estimator, all hand-worked from the formulas rather
   than snapshotted from a previous run.
-* `test/e2e_smoke.mjs` — 137 checks driving the real UI in headless Chromium with
+* `test/e2e_smoke.mjs` — 141 checks driving the real UI in headless Chromium with
   every weather/geocode call intercepted and served deterministic synthetic data.
 
 ## How it works

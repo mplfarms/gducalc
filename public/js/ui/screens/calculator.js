@@ -598,6 +598,12 @@ export function render(container) {
       // or date. It still loads its hybrid, and says so rather than
       // showing a blank second line.
       const bits = [];
+      // A migrated row always HAS a hybrid, so the "hybrid only" note has
+      // to lead rather than being a fallback for an empty line — as a
+      // fallback it never fired on the very rows that need it, and the
+      // row looked like a normal saved location that simply would not
+      // calculate.
+      if (!item.location) bits.push("hybrid only — no field or date saved");
       if (item.location) bits.push(item.location.label);
       if (item.plantingIso) bits.push(`planted ${formatShort(item.plantingIso, { withYear: true })}`);
       if (item.hybrid && item.hybrid.name) {
@@ -607,7 +613,6 @@ export function render(container) {
       } else if (item.location) {
         bits.push("GDU only");
       }
-      if (!bits.length) bits.push("hybrid only — no location saved");
 
       savedListEl.appendChild(
         h("div", { className: "gdu-saved-row" }, [
@@ -638,7 +643,23 @@ export function render(container) {
                 paintHybridField();
                 paintCatalogNote();
                 paintResolved();
-                showToast(`Loaded ${item.name}.`, { type: "success", duration: 2500 });
+
+                // Tapping a saved location is a request for its answer,
+                // not a request to look at the form again — so it runs.
+                // The guards below are the same ones the Calculate
+                // button applies; a migrated hybrid-only row has no
+                // field or date of its own and correctly stops here.
+                const ready = inputStore.getState();
+                if (!ready.location || !ready.plantingIso) {
+                  showToast(`Loaded ${item.name}. Add a ZIP and a planting date to calculate.`, { type: "success", duration: 3500 });
+                  return;
+                }
+                const check = inputStore.validatedHybrid();
+                if (!check.ok) {
+                  showToast(check.error, { type: "error" });
+                  return;
+                }
+                navigate("results");
               },
             },
             [
