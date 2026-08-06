@@ -494,7 +494,7 @@ export function buildPdf({ jsPDF, season, hybrid, location, brand, logoDataUrl, 
       if (o !== 0 && iso.slice(8, 10) !== "01") continue;
       if (o !== 0 && o < 8) continue;
       setText(MUTED);
-      doc.text(o === 0 ? "Plant" : formatShort(iso).split(" ")[0], px(o), plot.y + plot.h + 19, { align: o === 0 ? "left" : "center" });
+      doc.text(o === 0 ? "Plant" : formatShort(iso).split(" ")[0], px(o), plot.y + plot.h + 10, { align: o === 0 ? "left" : "center" });
     }
 
     // 10th-90th band
@@ -528,12 +528,11 @@ export function buildPdf({ jsPDF, season, hybrid, location, brand, logoDataUrl, 
     }
     dash([]);
 
-    // Heat-cap / cold-floor days, as a RUG under the plot floor — not
-    // full-height rules. See drawLimitDays in ui/chart.js: at ~1.5 pt per
-    // day a 40-day hot spell is not forty lines, it is one solid slab
-    // over every curve. Down here the same information costs nothing.
-    // jsPDF has no stroke alpha without a graphics state, so the colours
-    // are alpha-composited against white, which is what the page is.
+    // Heat-cap / cold-floor day rules, full plot height and drawn BEFORE
+    // the series so every curve sits on top of them — matching the
+    // on-screen chart. jsPDF has no stroke alpha without a graphics
+    // state, so the colours are alpha-composited against white, which is
+    // what the page is anyway.
     const limits = { capped: 0, zero: 0 };
     {
       const lastObserved = Math.min(season.observedEndOffset, xMax);
@@ -546,8 +545,8 @@ export function buildPdf({ jsPDF, season, hybrid, location, brand, logoDataUrl, 
           const kind = dayLimitKind(rec.tmax, rec.tmin);
           if (!kind) continue;
           limits[kind]++;
-          setStroke(overWhite(kind === "capped" ? LIMIT_CAPPED_RGB : LIMIT_ZERO_RGB, 0.85));
-          doc.line(px(i), plot.y + plot.h + 3, px(i), plot.y + plot.h + 9);
+          setStroke(overWhite(kind === "capped" ? LIMIT_CAPPED_RGB : LIMIT_ZERO_RGB, 0.4));
+          doc.line(px(i), plot.y, px(i), plot.y + plot.h);
         }
         doc.setLineWidth(0.5);
       }
@@ -610,7 +609,7 @@ export function buildPdf({ jsPDF, season, hybrid, location, brand, logoDataUrl, 
       const parts = [];
       if (limits.capped) parts.push(`red = the ${limits.capped} day${limits.capped === 1 ? "" : "s"} the high hit 86 °F, where heat above the cap added nothing`);
       if (limits.zero) parts.push(`blue = the ${limits.zero} day${limits.zero === 1 ? "" : "s"} that never got above 50 °F, which earned no GDUs at all`);
-      paragraph(`Ticks below the plot: ${parts.join("; ")}.`, { size: 7, gap: 3 });
+      paragraph(`Vertical rules: ${parts.join("; ")}.`, { size: 7, gap: 3 });
     }
 
     paragraph(

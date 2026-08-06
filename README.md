@@ -1,4 +1,4 @@
-# GDU Calculator v3.3.1 (Beta)
+# GDU Calculator v3.4 (Beta)
 
 A hybrid GDU calculator for corn: set a field location, a planting date, and a
 hybrid (133 built in, or type your own numbers — any one of GDUs to silk, GDUs to
@@ -225,7 +225,7 @@ npm run shots             # e2e plus screenshots into test/shots/
 * `test/unit_gdu.mjs` — 92 checks on the GDU math, the shipped hybrid catalog, the
   stage ladder and the rating estimator, all hand-worked from the formulas rather
   than snapshotted from a previous run.
-* `test/e2e_smoke.mjs` — 142 checks driving the real UI in headless Chromium with
+* `test/e2e_smoke.mjs` — 145 checks driving the real UI in headless Chromium with
   every weather/geocode call intercepted and served deterministic synthetic data.
 
 ## How it works
@@ -357,6 +357,13 @@ The rug carries exactly the same information — which days, to the day — whil
 leaving the series untouched, and a long run reads as a red band along the axis,
 which is the useful reading anyway. An e2e check asserts every tick clears the
 plot floor and is under 16 px tall, so it cannot regress into a rule again.
+
+The x-axis label guard is measured in **pixels, not days**. "Plant" is
+left-anchored at day 0 while month labels are centred, so a month start close to
+planting overprints it — an April 15 planting printed `PlanMay`. The old guard
+skipped a month within 8 days, which is not the unit the collision happens in:
+at ~1.5 px per day a fortnight is still narrower than the word "Plant". The
+gridline is kept and only the label dropped, so the grid has no gap.
 
 Both tests key off the daily **high**, which makes them mutually exclusive — a
 day cannot reach 86 °F and stay under 50 °F — so there is no precedence rule to

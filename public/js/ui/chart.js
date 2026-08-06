@@ -118,8 +118,7 @@ export function renderGduChart(container, season, hybrid, brand) {
 }
 
 function buildSvg(width, height, season, hybrid, brand) {
-  // bottom carries the limit-day rug (10px + gaps) above the month labels
-  const margin = { top: 14, right: 74, bottom: 46, left: 46 };
+  const margin = { top: 14, right: 74, bottom: 30, left: 46 };
   const plotW = width - margin.left - margin.right;
   const plotH = height - margin.top - margin.bottom;
 
@@ -184,9 +183,18 @@ function buildSvg(width, height, season, hybrid, brand) {
     const iso = addDays(season.plantingIso, o);
     const isMonthStart = iso.slice(8, 10) === "01";
     if (!isMonthStart && o !== 0) continue;
-    if (o !== 0 && o < 8) continue; // avoid colliding with the planting tick
+    // The "Plant" label is LEFT-anchored at x(0) and the month labels are
+    // centred, so a month start close to planting overprints it — this
+    // read "PlanMay" for an April 15 planting. The old guard was 8 DAYS,
+    // which is not the unit the collision happens in: at ~1.5 px per day
+    // a fortnight is still only ~24 px, less than the width of "Plant".
+    // Measured in pixels instead, against the two labels' real extents.
+    const PLANT_LABEL_PX = 34; // "Plant" at 10.5px, left-anchored from x(0)
+    const MONTH_HALF_PX = 13; // half of a centred "May"/"Jun"
+    const tooCloseToPlant = o !== 0 && x(o) - MONTH_HALF_PX < x(0) + PLANT_LABEL_PX;
     root.appendChild(svg("line", { class: "gdu-grid gdu-grid-x", x1: x(o), x2: x(o), y1: margin.top, y2: margin.top + plotH }));
-    const label = svg("text", { class: "gdu-axis-label", x: x(o), y: margin.top + plotH + 34, "text-anchor": o === 0 ? "start" : "middle" });
+    if (tooCloseToPlant) continue; // keep the gridline, drop only the label
+    const label = svg("text", { class: "gdu-axis-label", x: x(o), y: margin.top + plotH + 18, "text-anchor": o === 0 ? "start" : "middle" });
     label.textContent = o === 0 ? "Plant" : formatShort(iso).split(" ")[0];
     root.appendChild(label);
   }
@@ -196,7 +204,7 @@ function buildSvg(width, height, season, hybrid, brand) {
   // curves always sit on top of them. These are background annotation:
   // thin, and translucent enough that a run of 50 of them reads as
   // shading over July rather than as a fence in front of the data.
-  drawLimitDays(root, season, x, margin.top + plotH + 6, margin.top + plotH + 16);
+  drawLimitDays(root, season, x, margin.top, margin.top + plotH);
 
   // ---- normal-range band ---------------------------------------
   // A soft fill between the 10th and 90th percentile curves. This is
@@ -333,8 +341,8 @@ function buildSvg(width, height, season, hybrid, brand) {
 
 /** Builds an SVG path over [from..to], breaking at nulls. */
 /**
- * A rug along the bottom of the plot: one short tick per day that ran
- * into one of the formula's two limits.
+ * A thin full-height vertical rule on every day that ran into one of the
+ * formula's two limits.
  *
  * RED — the day's high reached the 86 °F cap. Every degree past it added
  * nothing to development, so the curve is flatter than the thermometer
@@ -343,15 +351,17 @@ function buildSvg(width, height, season, hybrid, brand) {
  * BLUE — the high never got above 50 °F, so the day never reached the
  * base and earned no GDUs at all.
  *
- * WHY A RUG AND NOT FULL-HEIGHT RULES. Full-height rules were the first
- * build and they destroyed the chart. Two hundred and twenty days across
- * ~340 px of plot is about 1.5 px per day, so a 40-day hot spell — an
- * ordinary Iowa July — is not forty distinguishable lines, it is one
- * solid slab of colour laid over every curve. Lowering the opacity only
- * made it a paler slab. Moving the marks into a 10 px strip under the
- * plot floor keeps exactly the same information (which days, to the day)
- * while leaving the five series untouched, and a long run now reads as a
- * red band along the axis, which is the useful reading anyway.
+ * Drawn UNDER the percentile band and all five series, 1 px wide and
+ * translucent, so the curves always read on top of them.
+ *
+ * A note for whoever reads this next, because it cost three rebuilds:
+ * these were briefly moved into a rug below the axis on the theory that
+ * a long hot run merges into a solid slab over the curves. That does
+ * happen — but only at 70%+ capped days, which is a synthetic test
+ * fixture, not Iowa. A real western-Iowa season runs ~25-40 capped days
+ * scattered through July and August, which reads as distinct rules
+ * exactly as intended. Verify against real data before "fixing" this
+ * again.
  *
  * OBSERVED DAYS ONLY. The solid line also covers the 16-day forecast,
  * but marking a forecast day red asserts a measurement nobody has taken.

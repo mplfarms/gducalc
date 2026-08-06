@@ -1181,14 +1181,13 @@ button.gdu-card-toggle:not(.gdu-card-toggle-open) {
   --gdu-limit-zero: #5b9bf0;
 }
 
-/* One short tick per qualifying day, in a strip below the plot floor —
-   see drawLimitDays in chart.js for why these are NOT full height. Solid
-   rather than translucent now: down here they cover nothing, so there is
-   no reason to make them hard to see. */
+/* A thin full-height rule per qualifying day, drawn under every curve.
+   1px and translucent on purpose: they are annotation behind the data,
+   not a fence in front of it. */
 .gdu-limit-day {
   fill: none;
-  stroke-width: 1.5;
-  stroke-opacity: 0.9;
+  stroke-width: 1;
+  stroke-opacity: 0.4;
 }
 
 .gdu-limit-capped {

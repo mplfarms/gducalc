@@ -807,12 +807,32 @@ async function main() {
       tickHeight: seg.length ? Math.round(Number(seg[0].getAttribute("y2")) - Number(seg[0].getAttribute("y1"))) : 0,
     };
   });
-  check("the limit marks sit BELOW the plot, not across it", () => {
-    // Full-height rules were the first build and they wrecked the chart:
-    // at ~1.5px per day a 40-day hot spell merges into one solid slab
-    // laid over all five curves. This pins them to the rug.
-    assert.ok(limitDays.belowPlot, "limit ticks must not overlap the plot area");
-    assert.ok(limitDays.tickHeight <= 16, `ticks are ${limitDays.tickHeight}px tall — that is a rule, not a rug`);
+  // ---- x-axis label collision -----------------------------------------
+  // "Plant" is left-anchored at day 0 and month labels are centred, so an
+  // early-April planting printed "PlanMay". The guard used to be measured
+  // in DAYS, which is not the unit the collision happens in.
+  const axisLabels = await page.evaluate(() => {
+    const boxes = [...document.querySelectorAll(".gdu-chart-svg text.gdu-axis-label")]
+      .map((t) => ({ text: t.textContent, ...t.getBoundingClientRect().toJSON() }))
+      .filter((b) => /Plant|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec/.test(b.text))
+      .sort((a, b) => a.left - b.left);
+    const hits = [];
+    for (let i = 1; i < boxes.length; i++) {
+      if (boxes[i].left < boxes[i - 1].right) hits.push(`${boxes[i - 1].text}/${boxes[i].text}`);
+    }
+    return { texts: boxes.map((b) => b.text), hits };
+  });
+  check("no two x-axis labels overprint each other", () => {
+    assert.deepEqual(axisLabels.hits, [], `overlapping labels: ${axisLabels.hits.join(", ")}`);
+  });
+
+  check("the limit marks are full-height rules inside the plot", () => {
+    // They belong in the graph, not in a rug under it. A real season
+    // runs ~25-40 capped days scattered through July and August, which
+    // reads as distinct rules; the solid slab that prompted a rug was a
+    // synthetic fixture at 70%+ capped, not anything Iowa produces.
+    assert.ok(!limitDays.belowPlot, "limit rules should span the plot, not sit under it");
+    assert.ok(limitDays.tickHeight > 100, `rules are only ${limitDays.tickHeight}px tall`);
   });
   check("days that hit the 86 °F cap are marked in red on the season line", () => {
     assert.ok(limitDays.capped > 0, "the synthetic season runs hot; expected capped days");
@@ -1107,7 +1127,7 @@ async function main() {
   check("the PDF fits on two sheets", () => assert.equal(pageCount, 2));
   check("the PDF explains the heat-cap rules", () => {
     // A coloured halo with no key is just a smudge behind the line.
-    assert.match(pdfBuf.toString("latin1"), /Ticks below the plot:/);
+    assert.match(pdfBuf.toString("latin1"), /Vertical rules:/);
   });
 
   const footer = pdfBuf.toString("latin1");
@@ -1511,6 +1531,43 @@ async function main() {
     // No stage table or stage chart to carry, so it collapses to one sheet.
     assert.ok(countPdfPages(noHybridBuf) <= 2, "must not spill past two sheets");
   });
+
+  // ---- an April planting must not collide "Plant" with "May" -----------
+  // The default fixture plants May 1, where day 0 IS the month start and
+  // nothing can collide — so the label guard would ship untested. An
+  // April 15 planting is the real-world case that printed "PlanMay".
+  await page.evaluate(() => {
+    const year = new Date().getFullYear();
+    localStorage.setItem("gdu.plantingDate", JSON.stringify(`${year}-04-15`));
+  });
+  await page.reload({ waitUntil: "networkidle" });
+  await page.evaluate(() => { window.location.hash = "#/results"; });
+  await page.waitForSelector(".gdu-chart-svg", { timeout: 20000 });
+  const aprilLabels = await page.evaluate(() => {
+    const boxes = [...document.querySelectorAll(".gdu-chart-svg text.gdu-axis-label")]
+      .map((t) => ({ text: t.textContent, ...t.getBoundingClientRect().toJSON() }))
+      .filter((b) => /Plant|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec/.test(b.text))
+      .sort((a, b) => a.left - b.left);
+    const hits = [];
+    for (let i = 1; i < boxes.length; i++) if (boxes[i].left < boxes[i - 1].right) hits.push(`${boxes[i - 1].text}/${boxes[i].text}`);
+    return { texts: boxes.map((b) => b.text), hits, gridlines: document.querySelectorAll(".gdu-chart-svg line.gdu-grid-x").length };
+  });
+  check("an April planting drops the crowded month label instead of overprinting", () => {
+    assert.deepEqual(aprilLabels.hits, [], `overlapping: ${aprilLabels.hits.join(", ")}`);
+    assert.equal(aprilLabels.texts[0], "Plant");
+    assert.ok(!aprilLabels.texts.includes("May"), `May should have been dropped: ${aprilLabels.texts.join(",")}`);
+    assert.ok(aprilLabels.texts.includes("Jun"), "later months must survive");
+  });
+  check("the dropped label keeps its gridline", () => {
+    // Losing the rule as well as the text would leave a visible gap in
+    // the grid where May ought to be.
+    assert.ok(aprilLabels.gridlines > aprilLabels.texts.length - 1, "the May gridline should still be drawn");
+  });
+  await page.evaluate(() => {
+    const year = new Date().getFullYear();
+    localStorage.setItem("gdu.plantingDate", JSON.stringify(`${year}-05-01`));
+  });
+  await page.reload({ waitUntil: "networkidle" });
 
   // ---- the blue (zero-GDU) marker --------------------------------------
   // The default fixture never drops below 50 °F, so blue is otherwise
