@@ -1,4 +1,4 @@
-# GDU Calculator v3.2 (Beta)
+# GDU Calculator v3.3 (Beta)
 
 A hybrid GDU calculator for corn: set a field location, a planting date, and a
 hybrid (133 built in, or type your own numbers — any one of GDUs to silk, GDUs to
@@ -22,6 +22,27 @@ one choice with two answers", which is the truth.
 The separate show/hide chevron that used to sit in the header bar is gone: the
 mode toggle is the expander now, and two controls for one piece of state is how
 they end up disagreeing.
+
+## The app icon
+
+`GDU` in white over the accumulation curve, on Republic navy — **#0C2336**,
+sampled directly out of `public/logos/republic-shield.png` rather than guessed
+at. Source SVGs live beside the PNGs (`icons/icon.svg`, `icons/icon-maskable.svg`)
+so the set can be regenerated at any size without redrawing it.
+
+It replaced a photograph of corn kernels, which at home-screen size was an
+undifferentiated yellow blob with no shape to grab. A wordmark loses the crop
+cue entirely, and that is the deliberate trade: a rep hunting a home screen
+reads three letters faster than any silhouette.
+
+The maskable variant is drawn at **0.68 scale**, not full bleed. Android crops
+maskable icons to a circle 80% of the icon's width, and the curve's lower-left
+cap sits ~292 px from centre at full size — past the 204.8 px safe radius. 0.68
+brings the furthest point inside with margin to spare.
+
+One consequence worth knowing: the installed icon is navy in every Brand View.
+The app is installed once, so it gets one icon, while the in-app chrome still
+follows whichever Brand View is selected.
 
 ## Location Details and Saved Locations
 
