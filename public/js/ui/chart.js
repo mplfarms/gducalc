@@ -118,7 +118,8 @@ export function renderGduChart(container, season, hybrid, brand) {
 }
 
 function buildSvg(width, height, season, hybrid, brand) {
-  const margin = { top: 14, right: 74, bottom: 30, left: 46 };
+  // bottom carries the limit-day rug (10px + gaps) above the month labels
+  const margin = { top: 14, right: 74, bottom: 46, left: 46 };
   const plotW = width - margin.left - margin.right;
   const plotH = height - margin.top - margin.bottom;
 
@@ -185,7 +186,7 @@ function buildSvg(width, height, season, hybrid, brand) {
     if (!isMonthStart && o !== 0) continue;
     if (o !== 0 && o < 8) continue; // avoid colliding with the planting tick
     root.appendChild(svg("line", { class: "gdu-grid gdu-grid-x", x1: x(o), x2: x(o), y1: margin.top, y2: margin.top + plotH }));
-    const label = svg("text", { class: "gdu-axis-label", x: x(o), y: margin.top + plotH + 18, "text-anchor": o === 0 ? "start" : "middle" });
+    const label = svg("text", { class: "gdu-axis-label", x: x(o), y: margin.top + plotH + 34, "text-anchor": o === 0 ? "start" : "middle" });
     label.textContent = o === 0 ? "Plant" : formatShort(iso).split(" ")[0];
     root.appendChild(label);
   }
@@ -195,7 +196,7 @@ function buildSvg(width, height, season, hybrid, brand) {
   // curves always sit on top of them. These are background annotation:
   // thin, and translucent enough that a run of 50 of them reads as
   // shading over July rather than as a fence in front of the data.
-  drawLimitDays(root, season, x, margin.top, margin.top + plotH);
+  drawLimitDays(root, season, x, margin.top + plotH + 6, margin.top + plotH + 16);
 
   // ---- normal-range band ---------------------------------------
   // A soft fill between the 10th and 90th percentile curves. This is
@@ -332,26 +333,28 @@ function buildSvg(width, height, season, hybrid, brand) {
 
 /** Builds an SVG path over [from..to], breaking at nulls. */
 /**
- * A thin vertical rule on every day that ran into one of the formula's
- * two limits.
+ * A rug along the bottom of the plot: one short tick per day that ran
+ * into one of the formula's two limits.
  *
  * RED — the day's high reached the 86 °F cap. Every degree past it added
  * nothing to development, so the curve is flatter than the thermometer
- * suggests and the plant was spending that heat on stress instead. This
- * is the visual answer to "it was blistering all week, why didn't we
- * gain more GDUs".
+ * suggests and the plant was spending that heat on stress instead.
  *
  * BLUE — the high never got above 50 °F, so the day never reached the
- * base and earned no GDUs at all. Rare in season by design: this marks
- * days the crop simply did not develop, not merely chilly nights.
+ * base and earned no GDUs at all.
  *
- * Full plot height and drawn UNDER everything, so the five curves stay
- * readable across them. The two kinds are mutually exclusive — see
- * dayLimitKind — so there is no precedence to get wrong.
+ * WHY A RUG AND NOT FULL-HEIGHT RULES. Full-height rules were the first
+ * build and they destroyed the chart. Two hundred and twenty days across
+ * ~340 px of plot is about 1.5 px per day, so a 40-day hot spell — an
+ * ordinary Iowa July — is not forty distinguishable lines, it is one
+ * solid slab of colour laid over every curve. Lowering the opacity only
+ * made it a paler slab. Moving the marks into a 10 px strip under the
+ * plot floor keeps exactly the same information (which days, to the day)
+ * while leaving the five series untouched, and a long run now reads as a
+ * red band along the axis, which is the useful reading anyway.
  *
  * OBSERVED DAYS ONLY. The solid line also covers the 16-day forecast,
  * but marking a forecast day red asserts a measurement nobody has taken.
- * Same rule as the stage-band temperatures.
  */
 function drawLimitDays(root, season, x, top, bottom) {
   const index = season && season.index;
@@ -362,7 +365,6 @@ function drawLimitDays(root, season, x, top, bottom) {
   for (let i = 0; i <= lastObserved; i++) {
     const rec = index[addDays(season.plantingIso, i)];
     if (!rec || rec.source !== "observed") continue;
-    if (!Number.isFinite(rec.tmax) || !Number.isFinite(rec.tmin)) continue;
     const kind = dayLimitKind(rec.tmax, rec.tmin);
     if (!kind) continue;
     group.appendChild(svg("line", { class: `gdu-limit-day gdu-limit-${kind}`, x1: x(i), x2: x(i), y1: top, y2: bottom }));

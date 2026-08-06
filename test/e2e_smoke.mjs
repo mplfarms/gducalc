@@ -786,15 +786,33 @@ async function main() {
 
   // ---- heat-cap / cold-floor day markers -------------------------------
   const limitDays = await page.evaluate(() => {
-    const seg = [...document.querySelectorAll(".gdu-limit-day")];
+    const seg = [...document.querySelectorAll(".gdu-chart-svg .gdu-limit-day")];
     const cs = (el) => getComputedStyle(el).stroke;
     return {
       capped: seg.filter((e) => e.classList.contains("gdu-limit-capped")).length,
       zero: seg.filter((e) => e.classList.contains("gdu-limit-zero")).length,
       cappedStroke: seg.find((e) => e.classList.contains("gdu-limit-capped")) ? cs(seg.find((e) => e.classList.contains("gdu-limit-capped"))) : null,
-      // A segment must never be both, and must sit on the season line.
+      // A segment must never be both.
       bothClasses: seg.filter((e) => e.classList.contains("gdu-limit-capped") && e.classList.contains("gdu-limit-zero")).length,
+      // ...and every tick must clear the plot floor, which is where the
+      // lowest gridline sits.
+      belowPlot: (() => {
+        // Scoped to the accumulation chart: the stage chart is also on
+        // this page and its gridlines sit far lower, which would make an
+        // unscoped comparison pass no matter where the ticks were.
+        const chart = document.querySelector(".gdu-chart-svg");
+        const floor = Math.max(...[...chart.querySelectorAll("line.gdu-grid:not(.gdu-grid-x)")].map((g) => Number(g.getAttribute("y1"))));
+        return seg.every((e) => Number(e.getAttribute("y1")) >= floor);
+      })(),
+      tickHeight: seg.length ? Math.round(Number(seg[0].getAttribute("y2")) - Number(seg[0].getAttribute("y1"))) : 0,
     };
+  });
+  check("the limit marks sit BELOW the plot, not across it", () => {
+    // Full-height rules were the first build and they wrecked the chart:
+    // at ~1.5px per day a 40-day hot spell merges into one solid slab
+    // laid over all five curves. This pins them to the rug.
+    assert.ok(limitDays.belowPlot, "limit ticks must not overlap the plot area");
+    assert.ok(limitDays.tickHeight <= 16, `ticks are ${limitDays.tickHeight}px tall — that is a rule, not a rug`);
   });
   check("days that hit the 86 °F cap are marked in red on the season line", () => {
     assert.ok(limitDays.capped > 0, "the synthetic season runs hot; expected capped days");
@@ -1089,7 +1107,7 @@ async function main() {
   check("the PDF fits on two sheets", () => assert.equal(pageCount, 2));
   check("the PDF explains the heat-cap rules", () => {
     // A coloured halo with no key is just a smudge behind the line.
-    assert.match(pdfBuf.toString("latin1"), /Vertical rules:/);
+    assert.match(pdfBuf.toString("latin1"), /Ticks below the plot:/);
   });
 
   const footer = pdfBuf.toString("latin1");

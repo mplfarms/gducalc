@@ -1,4 +1,4 @@
-# GDU Calculator v3.3 (Beta)
+# GDU Calculator v3.3.1 (Beta)
 
 A hybrid GDU calculator for corn: set a field location, a planting date, and a
 hybrid (133 built in, or type your own numbers — any one of GDUs to silk, GDUs to
@@ -225,7 +225,7 @@ npm run shots             # e2e plus screenshots into test/shots/
 * `test/unit_gdu.mjs` — 92 checks on the GDU math, the shipped hybrid catalog, the
   stage ladder and the rating estimator, all hand-worked from the formulas rather
   than snapshotted from a previous run.
-* `test/e2e_smoke.mjs` — 141 checks driving the real UI in headless Chromium with
+* `test/e2e_smoke.mjs` — 142 checks driving the real UI in headless Chromium with
   every weather/geocode call intercepted and served deterministic synthetic data.
 
 ## How it works
@@ -337,16 +337,26 @@ limits, drawn on this season's line:
   base and earned no GDUs at all. Rare by design: this marks days the crop did
   not develop, not merely days with a cold night.
 
-Drawn as **thin full-height vertical rules**, 1 px and 40% opacity, underneath
-the percentile band and every curve. Two notes on that:
+Drawn as a **rug**: one short tick per day in a 10 px strip below the plot
+floor, above the month labels.
 
-* Translucency is doing real work. A hot July puts 40-50 rules on the plot, and
-  at full strength they read as a fence in front of the data rather than
-  shading behind it.
-* Two earlier renderings were tried and rejected — recolouring the season line
-  (a red "This season" reads as the orange "Abnormally Hot" curve, the exact
-  failure the fixed palette exists to prevent) and a halo behind it (same
-  problem, softened). Vertical rules were chosen deliberately over both.
+Three renderings were tried before this one, and the failure mode is worth
+recording so it does not come back:
+
+1. **Recolouring the season line** — a red "This season" reads as the orange
+   "Abnormally Hot" curve, the exact failure the fixed palette exists to
+   prevent.
+2. **A halo behind the line** — same problem, softened.
+3. **Full-height vertical rules** — the worst of the three, and it shipped.
+   Two hundred and twenty days across ~340 px of plot is about 1.5 px per day,
+   so a 40-day hot spell is not forty distinguishable lines: it is one solid
+   slab of colour laid over all five curves. Lowering the opacity only made it
+   a paler slab. An ordinary Iowa July triggers it.
+
+The rug carries exactly the same information — which days, to the day — while
+leaving the series untouched, and a long run reads as a red band along the axis,
+which is the useful reading anyway. An e2e check asserts every tick clears the
+plot floor and is under 16 px tall, so it cannot regress into a rule again.
 
 Both tests key off the daily **high**, which makes them mutually exclusive — a
 day cannot reach 86 °F and stay under 50 °F — so there is no precedence rule to
