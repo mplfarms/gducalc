@@ -171,9 +171,13 @@ async function main() {
   // The built-in list is now an inline combobox on the Hybrid field, not
   // a modal. Focus opens it; a click on a row fills the form.
   const pickFromList = async (query, expect) => {
-    await page.click('input[aria-label="Hybrid name"]');
+    // fill() focuses the field itself, which opens the list — clicking
+    // first would only race the dropdown as it covers the box.
     await page.fill('input[aria-label="Hybrid name"]', query);
     await page.waitForFunction((n) => document.querySelectorAll(".gdu-suggest-option").length === n, expect, { timeout: 5000 });
+    // The list re-renders on every keystroke, so let it settle before
+    // clicking or the row can detach mid-click.
+    await page.waitForTimeout(80);
     await page.locator(".gdu-suggest-option").first().click();
   };
 
@@ -210,11 +214,43 @@ async function main() {
   const gpsButtons = await page.getByRole("button", { name: "Use My Location" }).count();
   check("device location is gone; ZIP is the only way in", () => assert.equal(gpsButtons, 0));
 
+  // ---- Location Details ------------------------------------------------
+  // Location and planting date are one card now: the two things a run
+  // cannot happen without, filled at the same moment.
+  const locCard = await page.evaluate(() => {
+    const cards = [...document.querySelectorAll(".card")];
+    const card = cards.find((c) => /Location Details/.test(c.querySelector(".section-header")?.textContent || ""));
+    if (!card) return null;
+    const labels = [...card.querySelectorAll(".field-label")].map((l) => l.textContent.trim());
+    return {
+      labels,
+      headers: cards.map((c) => c.querySelector(".section-header")?.textContent.trim()).filter(Boolean),
+      hasName: !!card.querySelector('input[aria-label="Location name"]'),
+      hasZip: !!card.querySelector('input[aria-label="ZIP code"]'),
+      hasDate: !!card.querySelector(".date-picker-input, input"),
+    };
+  });
+  check("Location Details holds the name, the ZIP and the planting date", () => {
+    assert.ok(locCard, "no Location Details card");
+    assert.deepEqual(locCard.labels, ["Location Name", "ZIP Code", "Planting Date"]);
+    assert.ok(locCard.hasName && locCard.hasZip);
+  });
+  check("the old separate Field Location and Planting Date cards are gone", () => {
+    assert.ok(!locCard.headers.includes("Field Location"), locCard.headers.join(" | "));
+    assert.ok(!locCard.headers.includes("Planting Date"), locCard.headers.join(" | "));
+  });
+
   await page.fill('input[aria-label="ZIP code"]', "51555");
   await page.getByRole("button", { name: "Look Up" }).click();
   await page.waitForSelector(".location-status-success");
   const locName = await page.locator(".gdu-location-name").textContent();
   check("ZIP lookup sets the field location", () => assert.match(locName, /Missouri Valley, IA/));
+  const coordLine = await page.locator(".gdu-location-coords").count();
+  check("the ZIP-centroid coordinate line is gone", () => {
+    // Four decimal places on a centroid implied a precision the ~6-15
+    // mile grid behind it does not have.
+    assert.equal(coordLine, 0);
+  });
 
   // Planting date: May 1 of the current year, via the date picker.
   const year = new Date().getFullYear();
@@ -401,6 +437,38 @@ async function main() {
   });
   if (SHOTS) await page.screenshot({ path: path.join(SHOT_DIR, "06-hybrid-list.png") });
 
+  // The chevron mirrors the Brand select above and is a real control:
+  // with the box already filled, it has to be able to reopen the FULL
+  // list, which re-focusing already-focused text cannot do.
+  const chevron = await page.evaluate(() => {
+    const btn = document.querySelector(".gdu-suggest-chevron");
+    const input = document.querySelector('input[aria-label="Hybrid name"]');
+    const b = btn.getBoundingClientRect();
+    const i = input.getBoundingClientRect();
+    return {
+      tag: btn.tagName,
+      hasSvg: !!btn.querySelector("svg"),
+      insideBox: b.right <= i.right + 1 && b.top >= i.top - 1 && b.bottom <= i.bottom + 1,
+      tall: Math.round(b.height) >= 44,
+      // The text must not run under the arrow.
+      padRight: getComputedStyle(input).paddingRight,
+    };
+  });
+  check("the hybrid box carries the same drop-down arrow as the Brand select", () => {
+    assert.equal(chevron.tag, "BUTTON");
+    assert.ok(chevron.hasSvg, "no chevron glyph");
+    assert.ok(chevron.insideBox, "the arrow should sit inside the field");
+    assert.ok(chevron.tall, "the arrow needs a full-height tap target");
+    assert.equal(chevron.padRight, "34px");
+  });
+
+  // Toggle shut, then open again from the arrow.
+  await page.locator(".gdu-suggest-chevron").click();
+  await page.waitForFunction(() => document.querySelector(".gdu-suggest").hidden === true);
+  await page.locator(".gdu-suggest-chevron").click();
+  await page.waitForFunction(() => document.querySelectorAll(".gdu-suggest-option").length > 0);
+  check("the arrow toggles the list shut and open", () => assert.ok(true));
+
   // Typing filters it.
   await page.fill('input[aria-label="Hybrid name"]', "09-90");
   await page.waitForFunction(() => document.querySelectorAll(".gdu-suggest-option").length === 1);
@@ -429,6 +497,22 @@ async function main() {
     assert.equal(silkVal, "1290");
     assert.equal(blVal, "2620");
   });
+  // A box already holding a chosen hybrid must still be able to browse:
+  // an earlier build showed nothing at all on an exact match, which left
+  // a filled field with no way to reach a different variety.
+  await page.locator(".gdu-suggest-chevron").click();
+  await page.waitForFunction(() => document.querySelectorAll(".gdu-suggest-option").length > 1);
+  const browseFromFilled = await page.evaluate(() => ({
+    rows: document.querySelectorAll(".gdu-suggest-option").length,
+    value: document.querySelector('input[aria-label="Hybrid name"]').value,
+  }));
+  check("a filled box reopens the whole list, like reopening a select", () => {
+    assert.equal(browseFromFilled.rows, 133);
+    assert.equal(browseFromFilled.value, "NC 09-90 PCE", "browsing must not clear the choice");
+  });
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(() => document.querySelector(".gdu-suggest").hidden === true);
+
   const provenance = await page.locator(".gdu-catalog-line").textContent();
   check("the source of the numbers is stated, with maturity", () => {
     assert.match(provenance, /From hybrid list/);
@@ -1161,6 +1245,82 @@ async function main() {
     assert.notEqual(m[1], m[2], `hot and cool finishes are identical: ${rangeText}`);
   });
   if (SHOTS) await page.screenshot({ path: path.join(SHOT_DIR, "15-projected-range.png"), fullPage: true });
+
+  // ---- Saved Locations --------------------------------------------------
+  // A saved entry is now the whole setup — name, field, date and the
+  // hybrid if one was entered — not a bare hybrid.
+  await page.evaluate(() => { window.location.hash = "#/calculator"; });
+  await page.waitForSelector(".gdu-save-hybrid-btn");
+  const savedCard = await page.evaluate(() => {
+    const cards = [...document.querySelectorAll(".card")];
+    const card = cards.find((c) => /Saved Locations/.test(c.querySelector(".section-header")?.textContent || ""));
+    const hybridCard = cards.find((c) => /^Hybrid$/.test(c.querySelector(".section-header")?.textContent.trim() || ""));
+    return {
+      exists: !!card,
+      btn: card ? card.querySelector(".gdu-save-hybrid-btn").textContent.trim() : null,
+      // Must live OUTSIDE the collapsible hybrid body, or a location
+      // could not be saved in GDU-only mode.
+      insideHybrid: hybridCard ? hybridCard.contains(card) : null,
+    };
+  });
+  check("Save This Location sits in its own always-visible card", () => {
+    assert.ok(savedCard.exists, "no Saved Locations card");
+    assert.equal(savedCard.btn, "Save This Location");
+    assert.equal(savedCard.insideHybrid, false);
+  });
+
+  // Saving refuses without a name — the name is what the entry is FOR.
+  await page.fill('input[aria-label="Location name"]', "");
+  await page.getByRole("button", { name: "Save This Location" }).click();
+  const nameErr = await page.locator(".toast-message").first().textContent();
+  check("saving without a name is refused", () => assert.match(nameErr, /name/i));
+
+  await page.fill('input[aria-label="Location name"]', "Brown home place");
+  // Capture what is on screen at save time rather than hard-coding it —
+  // earlier blocks in this suite edit these boxes, and a literal here
+  // would break whenever one of them changes.
+  const atSaveTime = await page.evaluate(() => ({
+    zip: document.querySelector('input[aria-label="ZIP code"]').value,
+    hybrid: document.querySelector('input[aria-label="Hybrid name"]').value,
+    silk: document.querySelector('input[aria-label="GDUs to silk"]').value,
+    bl: document.querySelector('input[aria-label="GDUs to black layer"]').value,
+  }));
+  await page.getByRole("button", { name: "Save This Location" }).click();
+  await page.waitForSelector(".gdu-saved-row");
+  const savedRow = await page.locator(".gdu-saved-row").first().textContent();
+  check("a saved entry carries the name, the field, the date and the hybrid", () => {
+    assert.match(savedRow, /Brown home place/);
+    assert.match(savedRow, /Missouri Valley/);
+    assert.match(savedRow, /planted/i);
+    assert.match(savedRow, /09-90 PCE/);
+  });
+
+  // Change everything, then load it back.
+  await page.fill('input[aria-label="Location name"]', "somewhere else");
+  await page.fill('input[aria-label="Hybrid name"]', "");
+  await page.fill('input[aria-label="GDUs to silk"]', "");
+  await page.fill('input[aria-label="GDUs to black layer"]', "");
+  await page.waitForTimeout(120);
+  await page.locator(".gdu-saved-load").first().click();
+  await page.waitForTimeout(200);
+  const restored = await page.evaluate(() => ({
+    name: document.querySelector('input[aria-label="Location name"]').value,
+    zip: document.querySelector('input[aria-label="ZIP code"]').value,
+    hybrid: document.querySelector('input[aria-label="Hybrid name"]').value,
+    silk: document.querySelector('input[aria-label="GDUs to silk"]').value,
+    bl: document.querySelector('input[aria-label="GDUs to black layer"]').value,
+    mode: [...document.querySelectorAll(".gdu-mode-btn")].map((b) => b.getAttribute("aria-pressed")),
+  }));
+  check("loading a saved location restores every field it saved", () => {
+    assert.equal(restored.name, "Brown home place");
+    assert.equal(restored.zip, atSaveTime.zip);
+    assert.equal(restored.hybrid, atSaveTime.hybrid);
+    assert.equal(restored.silk, atSaveTime.silk);
+    assert.equal(restored.bl, atSaveTime.bl);
+  });
+  check("loading an entry that has a hybrid switches back to Enter Hybrid", () => {
+    assert.deepEqual(restored.mode, ["true", "false"]);
+  });
 
   // ---- GDU Only ---------------------------------------------------------
   // The mode is a decision, not a setting: picking it clears the hybrid,

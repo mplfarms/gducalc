@@ -1264,6 +1264,44 @@ button.gdu-card-toggle:not(.gdu-card-toggle-open) {
   position: relative;
 }
 
+/* Wraps input + chevron so the arrow can sit inside the box, exactly
+   where the Brand select above draws its own. */
+.gdu-hybrid-input-wrap {
+  position: relative;
+  display: block;
+}
+
+/* Same 34px gutter the Brand select reserves, so a long variety name
+   never runs under the arrow. Only applied when there IS a list. */
+.gdu-hybrid-input-listable {
+  padding-right: 34px;
+}
+
+.gdu-suggest-chevron {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: #808f86; /* matches the select chevron's stroke in both themes */
+}
+
+.gdu-suggest-chevron svg {
+  width: 12px;
+  height: 8px;
+}
+
+.gdu-suggest-chevron[hidden] {
+  display: none;
+}
+
 .gdu-suggest {
   position: absolute;
   z-index: 20;

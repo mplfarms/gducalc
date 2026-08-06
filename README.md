@@ -1,4 +1,4 @@
-# GDU Calculator v3.0.1 (Beta)
+# GDU Calculator v3.1 (Beta)
 
 A hybrid GDU calculator for corn: set a field location, a planting date, and a
 hybrid (133 built in, or type your own numbers — any one of GDUs to silk, GDUs to
@@ -23,9 +23,36 @@ The separate show/hide chevron that used to sit in the header bar is gone: the
 mode toggle is the expander now, and two controls for one piece of state is how
 they end up disagreeing.
 
+## Location Details and Saved Locations
+
+Field location and planting date are **one card**: they are the two things a run
+cannot happen without, they get filled at the same moment, and splitting them
+across two headers made a short form look long. It holds a **Location Name**
+(the grower's own — "Brown home place", "north 80"), the ZIP, and the planting
+date.
+
+The ZIP-centroid coordinate line is gone. Four decimal places implied a
+precision the ~6-15 mile grid behind them does not have.
+
+**Saving now saves the whole setup** — name, field, planting date, and the
+hybrid if one was entered — under `Save This Location`. That card sits *outside*
+the collapsible hybrid body on purpose: burying the button inside a section that
+folds shut in GDU-only mode would have made a location impossible to save
+without a hybrid. Each saved row shows the name on top and the field, date and
+hybrid beneath it.
+
+Entries from the old saved-hybrids list are **migrated, not dropped** — each
+becomes an entry carrying only its hybrid, which loads exactly as it used to and
+labels itself "hybrid only — no location saved". Silently deleting somebody's
+saved list to change a data shape was not a trade to make on their behalf.
+
 **The built-in list is an inline combobox on the Hybrid field**, not a modal.
-Focus the box and all 133 drop down in a scrollable list; type and it filters;
-arrow keys highlight and Enter takes it. Rows carry the Brand View's code and
+It carries the same drop-down arrow as the Brand select above it — a real
+button, not a background image, because with the box already filled it has to be
+able to reopen the full list. Focus the box and all 133 drop down in a
+scrollable list; type and it filters; arrow keys highlight and Enter takes it. A
+value that exactly matches an entry reopens the *whole* list rather than a
+redundant list of one, so a filled box can still be browsed. Rows carry the Brand View's code and
 both GDU numbers, because picking a hybrid here is really picking a pair of
 numbers. Anything not on the list is still typed straight in — same box, no
 mode switch. `components/hybridPicker.js` was deleted outright rather than left
@@ -171,7 +198,7 @@ npm run shots             # e2e plus screenshots into test/shots/
 * `test/unit_gdu.mjs` — 92 checks on the GDU math, the shipped hybrid catalog, the
   stage ladder and the rating estimator, all hand-worked from the formulas rather
   than snapshotted from a previous run.
-* `test/e2e_smoke.mjs` — 126 checks driving the real UI in headless Chromium with
+* `test/e2e_smoke.mjs` — 137 checks driving the real UI in headless Chromium with
   every weather/geocode call intercepted and served deterministic synthetic data.
 
 ## How it works

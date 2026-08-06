@@ -33,18 +33,53 @@ import * as brandStore from "./brandStore.js";
 import { getBrand, brandedHybridName } from "../brand.js";
 
 const LOCATION_KEY = "gdu.location";
+const LOCATION_NAME_KEY = "gdu.locationName";
 const PLANTING_KEY = "gdu.plantingDate";
-const HYBRIDS_KEY = "gdu.savedHybrids";
+const HYBRIDS_KEY = "gdu.savedHybrids"; // legacy, read once for migration
+const SAVED_KEY = "gdu.savedLocations";
 const CURRENT_KEY = "gdu.currentHybrid";
 
 const pubsub = createPubSub();
 
-/** @type {{location: any, plantingIso: string|null, hybrid: any, saved: any[]}} */
+/**
+ * The saved list used to hold bare hybrids. It now holds LOCATIONS —
+ * a name, the field, the planting date, and the hybrid if one was
+ * entered — because "same field, same hybrid, check again in two weeks"
+ * is the actual pattern, and re-entering the ZIP and date every time was
+ * most of the typing.
+ *
+ * Old saved hybrids are migrated rather than dropped: each becomes an
+ * entry carrying only its hybrid, which loads exactly as it used to.
+ * Silently deleting somebody's saved list to change a data shape is not
+ * a trade that was ours to make.
+ */
+function migrateLegacyHybrids() {
+  const legacy = readJson(HYBRIDS_KEY, []);
+  if (!Array.isArray(legacy) || legacy.length === 0) return [];
+  return legacy.map((hy) => ({
+    id: hy.id,
+    name: hy.name,
+    location: null,
+    plantingIso: null,
+    hybrid: { brand: hy.brand || "", name: hy.name, gduToSilk: hy.gduToSilk, gduToBlackLayer: hy.gduToBlackLayer, rm: hy.rm ?? null },
+  }));
+}
+
+function initialSaved() {
+  const current = readJson(SAVED_KEY, null);
+  if (Array.isArray(current)) return current;
+  const migrated = migrateLegacyHybrids();
+  if (migrated.length) writeJson(SAVED_KEY, migrated);
+  return migrated;
+}
+
+/** @type {{location: any, locationName: string, plantingIso: string|null, hybrid: any, saved: any[]}} */
 let state = {
   location: readJson(LOCATION_KEY, null),
+  locationName: readJson(LOCATION_NAME_KEY, ""),
   plantingIso: readJson(PLANTING_KEY, null),
   hybrid: readJson(CURRENT_KEY, { brand: "", name: "", gduToSilk: null, gduToBlackLayer: null, rm: null }),
-  saved: readJson(HYBRIDS_KEY, []),
+  saved: initialSaved(),
 };
 
 export function getState() {
@@ -58,6 +93,13 @@ export function subscribe(fn) {
 export function setLocation(location) {
   state = { ...state, location };
   writeJson(LOCATION_KEY, location);
+  pubsub.notify();
+}
+
+/** The grower's own name for this field — "Brown home place", "north 80". */
+export function setLocationName(name) {
+  state = { ...state, locationName: String(name || "") };
+  writeJson(LOCATION_NAME_KEY, state.locationName);
   pubsub.notify();
 }
 
@@ -75,56 +117,84 @@ export function updateHybrid(patch) {
 }
 
 /**
- * Saves the current hybrid to the list, replacing any existing entry
- * with the same brand + name (case-insensitive) rather than piling up
- * near-duplicates — re-saving after fixing a typo'd GDU number is the
- * common case, and it should update, not append.
+ * Saves the whole current setup — location, planting date and the hybrid
+ * if one is entered — under a name.
+ *
+ * Replaces any existing entry with the same name (case-insensitive)
+ * rather than piling up near-duplicates: re-saving after fixing a typo
+ * is the common case, and it should update, not append.
+ *
  * @returns {{ok: boolean, error?: string}}
  */
-export function saveCurrentHybrid() {
+export function saveCurrentLocation() {
+  const name = String(state.locationName || "").trim();
+  if (!name) return { ok: false, error: "Give this location a name before saving it." };
+  if (!state.location) return { ok: false, error: "Set a ZIP code before saving this location." };
+
   const h = state.hybrid || {};
-  const name = String(h.name || "").trim();
-  if (!name) return { ok: false, error: "Give the hybrid a name before saving it." };
   // Saving stores exactly what was typed, estimates included as blanks —
   // re-resolving on load means a saved RM-only hybrid picks up any later
   // change to the estimator instead of freezing today's guess.
-  const check = resolveHybridInputs({ gduToSilk: h.gduToSilk, gduToBlackLayer: h.gduToBlackLayer, rm: h.rm });
-  if (!check.ok) return { ok: false, error: check.error };
+  const hasHybrid = !hasNoHybridInput() || !!String(h.name || "").trim();
+  if (hasHybrid) {
+    const check = resolveHybridInputs({ gduToSilk: h.gduToSilk, gduToBlackLayer: h.gduToBlackLayer, rm: h.rm });
+    if (!check.ok) return { ok: false, error: check.error };
+  }
+
   const entry = {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    brand: String(h.brand || "").trim(),
     name,
-    gduToSilk: Number.isFinite(Number(h.gduToSilk)) ? Number(h.gduToSilk) : null,
-    gduToBlackLayer: Number.isFinite(Number(h.gduToBlackLayer)) ? Number(h.gduToBlackLayer) : null,
-    rm: Number.isFinite(Number(h.rm)) ? Number(h.rm) : null,
+    location: state.location,
+    plantingIso: state.plantingIso || null,
+    hybrid: hasHybrid
+      ? {
+          brand: String(h.brand || "").trim(),
+          name: String(h.name || "").trim(),
+          gduToSilk: Number.isFinite(Number(h.gduToSilk)) ? Number(h.gduToSilk) : null,
+          gduToBlackLayer: Number.isFinite(Number(h.gduToBlackLayer)) ? Number(h.gduToBlackLayer) : null,
+          rm: Number.isFinite(Number(h.rm)) ? Number(h.rm) : null,
+        }
+      : null,
   };
-  const key = (x) => `${String(x.brand || "").trim().toLowerCase()}|${String(x.name || "").trim().toLowerCase()}`;
+  const key = (x) => String(x.name || "").trim().toLowerCase();
   const next = state.saved.filter((x) => key(x) !== key(entry));
   next.push(entry);
-  next.sort((a, b) => (a.brand || "").localeCompare(b.brand || "") || a.name.localeCompare(b.name));
+  next.sort((a, b) => String(a.name).localeCompare(String(b.name)));
   state = { ...state, saved: next };
-  writeJson(HYBRIDS_KEY, next);
+  writeJson(SAVED_KEY, next);
   pubsub.notify();
   return { ok: true };
 }
 
-export function deleteSavedHybrid(id) {
+export function deleteSavedLocation(id) {
   const next = state.saved.filter((x) => x.id !== id);
   state = { ...state, saved: next };
-  writeJson(HYBRIDS_KEY, next);
+  writeJson(SAVED_KEY, next);
   pubsub.notify();
 }
 
-export function loadSavedHybrid(id) {
+/**
+ * Restores a saved entry. A migrated legacy row carries only a hybrid,
+ * so the location and date are left exactly as they are rather than
+ * being blanked by nulls that were never really saved.
+ */
+export function loadSavedLocation(id) {
   const found = state.saved.find((x) => x.id === id);
   if (!found) return;
-  updateHybrid({
-    brand: found.brand,
-    name: found.name,
-    gduToSilk: found.gduToSilk,
-    gduToBlackLayer: found.gduToBlackLayer,
-    rm: found.rm ?? null,
-  });
+  setLocationName(found.name || "");
+  if (found.location) setLocation(found.location);
+  if (found.plantingIso) setPlantingDate(found.plantingIso);
+  if (found.hybrid) {
+    updateHybrid({
+      brand: found.hybrid.brand,
+      name: found.hybrid.name,
+      gduToSilk: found.hybrid.gduToSilk,
+      gduToBlackLayer: found.hybrid.gduToBlackLayer,
+      rm: found.hybrid.rm ?? null,
+    });
+  } else {
+    clearHybrid();
+  }
 }
 
 /**

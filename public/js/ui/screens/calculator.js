@@ -35,6 +35,37 @@ export function render(container) {
   }
 
   // ---------------------------------------------------------------
+  // Planting date
+  // ---------------------------------------------------------------
+  const datePicker = createDatePicker({
+    value: state.plantingIso,
+    placeholder: "Select planting date",
+    onChange: (iso) => {
+      inputStore.setPlantingDate(iso);
+      paintPlantingNote();
+    },
+  });
+
+  const plantingNote = h("p", { className: "field-note" }, "");
+  function paintPlantingNote() {
+    const iso = inputStore.getState().plantingIso;
+    if (!iso) {
+      plantingNote.textContent = "GDUs are counted starting on the planting date itself.";
+      return;
+    }
+    const plantYear = yearOf(iso);
+    const thisYear = yearOf(todayIso());
+    if (iso > todayIso()) {
+      plantingNote.textContent = `Planned for ${formatShort(iso, { withYear: true })}. With nothing in the ground yet there's no actual accumulation to show — you'll get the normal, hot and cool projections only.`;
+    } else if (plantYear < thisYear) {
+      plantingNote.textContent = `Looking back at the ${plantYear} season. Every day is already on the books, so these are actuals, not a forecast.`;
+    } else {
+      plantingNote.textContent = "GDUs are counted starting on the planting date itself.";
+    }
+  }
+  paintPlantingNote();
+
+  // ---------------------------------------------------------------
   // Location
   // ---------------------------------------------------------------
   const locationValueEl = h("div", { className: "gdu-location-readout" });
@@ -46,12 +77,21 @@ export function render(container) {
       locationValueEl.appendChild(h("span", { className: "gdu-location-empty" }, "Enter a ZIP code to set the field location."));
       return;
     }
+    // Coordinates deliberately not shown. They are the ZIP centroid, not
+    // the field, and four decimal places implied a precision the ~6-15
+    // mile grid behind them does not have.
     locationValueEl.appendChild(h("div", { className: "gdu-location-name" }, loc.label));
-    locationValueEl.appendChild(
-      h("div", { className: "gdu-location-coords" }, `${loc.lat.toFixed(4)}, ${loc.lon.toFixed(4)} · ZIP centroid`)
-    );
   }
   paintLocation();
+
+  const locationNameInput = h("input", {
+    className: "text-input",
+    type: "text",
+    "aria-label": "Location name",
+    placeholder: "e.g. Brown home place",
+    value: state.locationName || "",
+    oninput: (e) => inputStore.setLocationName(e.target.value),
+  });
 
   const zipInput = h("input", {
     className: "text-input",
@@ -92,55 +132,25 @@ export function render(container) {
     }
   });
 
+  // Location and planting date are one card: they are the two things a
+  // run cannot happen without, they are filled at the same moment, and
+  // splitting them across two headers made a short form look long.
   const locationCard = h("section", { className: "card" }, [
-    h("h3", { className: "section-header" }, "Field Location"),
-    locationValueEl,
+    h("h3", { className: "section-header" }, "Location Details"),
+    h("div", { className: "field" }, [h("label", { className: "field-label" }, "Location Name"), locationNameInput]),
     h("div", { className: "field" }, [
       h("label", { className: "field-label" }, "ZIP Code"),
       h("div", { className: "gdu-inline-row" }, [zipInput, zipBtn]),
+      locationValueEl,
     ]),
     statusEl,
+    h("div", { className: "field" }, [h("label", { className: "field-label" }, "Planting Date"), datePicker.el]),
+    plantingNote,
     h(
       "p",
       { className: "field-note" },
       "Weather comes from a gridded reanalysis roughly 6 to 15 miles per cell, so every field in the same township returns the same numbers — a ZIP is as precise as this data gets."
     ),
-  ]);
-
-  // ---------------------------------------------------------------
-  // Planting date
-  // ---------------------------------------------------------------
-  const datePicker = createDatePicker({
-    value: state.plantingIso,
-    placeholder: "Select planting date",
-    onChange: (iso) => {
-      inputStore.setPlantingDate(iso);
-      paintPlantingNote();
-    },
-  });
-
-  const plantingNote = h("p", { className: "field-note" }, "");
-  function paintPlantingNote() {
-    const iso = inputStore.getState().plantingIso;
-    if (!iso) {
-      plantingNote.textContent = "GDUs are counted starting on the planting date itself.";
-      return;
-    }
-    const plantYear = yearOf(iso);
-    const thisYear = yearOf(todayIso());
-    if (iso > todayIso()) {
-      plantingNote.textContent = `Planned for ${formatShort(iso, { withYear: true })}. With nothing in the ground yet there's no actual accumulation to show — you'll get the normal, hot and cool projections only.`;
-    } else if (plantYear < thisYear) {
-      plantingNote.textContent = `Looking back at the ${plantYear} season. Every day is already on the books, so these are actuals, not a forecast.`;
-    } else {
-      plantingNote.textContent = "GDUs are counted starting on the planting date itself.";
-    }
-  }
-  paintPlantingNote();
-
-  const dateCard = h("section", { className: "card" }, [
-    h("h3", { className: "section-header" }, "Planting Date"),
-    h("div", { className: "field" }, [datePicker.el, plantingNote]),
   ]);
 
   // ---------------------------------------------------------------
@@ -237,11 +247,42 @@ export function render(container) {
       }
     },
     // A click on a row fires after blur, so hiding has to wait a beat or
-    // the list is gone before the tap lands.
-    onblur: () => setTimeout(closeSuggest, 160),
+    // the list is gone before the tap lands. The handle is kept so a
+    // reopen can CANCEL it — otherwise a blur, then a reopen inside the
+    // same 160 ms, leaves a stale timer that shuts the list a moment
+    // after it was deliberately opened.
+    onblur: () => {
+      clearTimeout(blurTimer);
+      blurTimer = setTimeout(closeSuggest, 160);
+    },
   });
 
+  /** @type {any} */
+  let blurTimer = null;
+
+  // The chevron matches the Brand select above it, and is a real button
+  // rather than a background image: with the box already filled, tapping
+  // it has to be able to reopen the full list, which focusing the text
+  // alone would not do on a device where the field is already focused.
+  const suggestChevron = h(
+    "button",
+    {
+      type: "button",
+      className: "gdu-suggest-chevron",
+      tabindex: "-1", // the input owns the keyboard path; this is a pointer affordance
+      "aria-label": "Show hybrid list",
+      onmousedown: (e) => e.preventDefault(), // don't steal focus and fire blur
+      onclick: () => {
+        if (suggestOpen) return closeSuggest();
+        nameInput.focus();
+        openSuggest(nameInput.value);
+      },
+    },
+    [chevronSvg()]
+  );
+
   function closeSuggest() {
+    clearTimeout(blurTimer);
     suggestOpen = false;
     activeIdx = -1;
     // Emptied, not just hidden: 133 stale rows left in the DOM outlive
@@ -268,6 +309,9 @@ export function render(container) {
   const hybridFieldNote = h("p", { className: "field-note" }, "");
 
   function paintHybridField() {
+    // No list under Other, so no arrow promising one.
+    suggestChevron.hidden = isOtherBrand();
+    nameInput.classList.toggle("gdu-hybrid-input-listable", !isOtherBrand());
     if (isOtherBrand()) {
       nameInput.placeholder = "e.g. DKC62-08";
       hybridFieldNote.textContent = "Not one of ours, so there's no list to pick from — type the variety, then its GDU numbers off that brand's tech sheet.";
@@ -288,9 +332,13 @@ export function render(container) {
     // picked one from the list would silently end up with our numbers
     // filed under somebody else's name.
     if (!catalog.isAvailable() || isOtherBrand()) return closeSuggest();
-    // A name typed in full already matches its own row; showing a
-    // one-item list over it is noise, so an exact hit closes instead.
-    const matches = catalog.findByVariety(query) ? [] : catalog.search(query);
+    // A value that exactly matches an entry is a hybrid already CHOSEN,
+    // not a search in progress — so show the whole list, which is what
+    // reopening a <select> does. Filtering by it would give a redundant
+    // list of one, and an earlier build showed nothing at all, which
+    // left a filled box with no way to browse to a different hybrid.
+    clearTimeout(blurTimer);
+    const matches = catalog.findByVariety(query) ? catalog.getAll() : catalog.search(query);
     suggestEl.textContent = "";
     activeIdx = -1;
     if (!matches.length) return closeSuggest();
@@ -542,10 +590,25 @@ export function render(container) {
     const saved = inputStore.getState().saved;
     savedListEl.textContent = "";
     if (!saved.length) {
-      savedListEl.appendChild(h("p", { className: "empty-state" }, "No saved hybrids yet."));
+      savedListEl.appendChild(h("p", { className: "empty-state" }, "No saved locations yet."));
       return;
     }
     for (const item of saved) {
+      // A migrated entry from the old saved-hybrids list has no location
+      // or date. It still loads its hybrid, and says so rather than
+      // showing a blank second line.
+      const bits = [];
+      if (item.location) bits.push(item.location.label);
+      if (item.plantingIso) bits.push(`planted ${formatShort(item.plantingIso, { withYear: true })}`);
+      if (item.hybrid && item.hybrid.name) {
+        const hy = item.hybrid;
+        const nums = hy.gduToSilk && hy.gduToBlackLayer ? ` (${hy.gduToSilk.toLocaleString()} / ${hy.gduToBlackLayer.toLocaleString()})` : "";
+        bits.push(`${hy.name}${hy.rm ? ` · ${hy.rm} day` : ""}${nums}`);
+      } else if (item.location) {
+        bits.push("GDU only");
+      }
+      if (!bits.length) bits.push("hybrid only — no location saved");
+
       savedListEl.appendChild(
         h("div", { className: "gdu-saved-row" }, [
           h(
@@ -554,13 +617,25 @@ export function render(container) {
               type: "button",
               className: "gdu-saved-load",
               onclick: () => {
-                inputStore.loadSavedHybrid(item.id);
-                const s = inputStore.getState().hybrid;
-                brandSelectEl.value = s.brand || "";
-                nameInput.value = s.name || "";
-                rmInput.input.value = s.rm ?? "";
-                silkInput.input.value = s.gduToSilk ?? "";
-                blInput.input.value = s.gduToBlackLayer ?? "";
+                inputStore.loadSavedLocation(item.id);
+                const st = inputStore.getState();
+                locationNameInput.value = st.locationName || "";
+                if (st.location) {
+                  zipInput.value = st.location.zip || "";
+                  paintLocation();
+                }
+                if (st.plantingIso) datePicker.setValue(st.plantingIso);
+                paintPlantingNote();
+                const hy = st.hybrid;
+                brandSelectEl.value = hy.brand || "";
+                nameInput.value = hy.name || "";
+                rmInput.input.value = hy.rm ?? "";
+                silkInput.input.value = hy.gduToSilk ?? "";
+                blInput.input.value = hy.gduToBlackLayer ?? "";
+                hybridMode = !!(hy.name || hy.gduToSilk || hy.gduToBlackLayer || hy.rm);
+                paintMode();
+                setHybridCollapsed(!hybridMode);
+                paintHybridField();
                 paintCatalogNote();
                 paintResolved();
                 showToast(`Loaded ${item.name}.`, { type: "success", duration: 2500 });
@@ -568,7 +643,7 @@ export function render(container) {
             },
             [
               h("span", { className: "gdu-saved-name" }, item.name),
-              h("span", { className: "gdu-saved-meta" }, `${item.brand ? `${item.brand} · ` : ""}${item.rm ? `${item.rm} day · ` : ""}${item.gduToSilk.toLocaleString()} silk · ${item.gduToBlackLayer.toLocaleString()} BL`),
+              h("span", { className: "gdu-saved-meta" }, bits.join(" · ")),
             ]
           ),
           h(
@@ -579,13 +654,13 @@ export function render(container) {
               "aria-label": `Delete ${item.name}`,
               onclick: async () => {
                 const yes = await showConfirm({
-                  title: "Delete hybrid?",
+                  title: "Delete location?",
                   message: `Remove ${item.name} from your saved list?`,
                   confirmLabel: "Delete",
                   destructive: true,
                 });
                 if (yes) {
-                  inputStore.deleteSavedHybrid(item.id);
+                  inputStore.deleteSavedLocation(item.id);
                   paintSavedList();
                 }
               },
@@ -607,7 +682,7 @@ export function render(container) {
     h("div", { className: "field" }, [h("label", { className: "field-label" }, "Brand"), brandSelectEl]),
     h("div", { className: "field gdu-hybrid-field" }, [
       h("label", { className: "field-label" }, "Hybrid"),
-      nameInput,
+      h("div", { className: "gdu-hybrid-input-wrap" }, [nameInput, suggestChevron]),
       suggestEl,
       hybridFieldNote,
     ]),
@@ -627,24 +702,32 @@ export function render(container) {
       { className: "field-note" },
       "Anything not on the built-in list can be typed in directly — use the numbers off that brand's own tech sheet where you have them. A real GDU rating always beats an estimate, and one real rating beats RM: the app estimates a missing black layer from a known silk before it will fall back to maturity."
     ),
+  ]);
+
+  // Saving is its own card, deliberately OUTSIDE the collapsible hybrid
+  // body. What gets saved is the whole setup — field, date and the
+  // hybrid if there is one — so burying the button inside a section that
+  // folds shut in GDU-only mode would have made a location impossible to
+  // save without a hybrid.
+  const savedCard = h("section", { className: "card" }, [
+    h("h3", { className: "section-header" }, "Saved Locations"),
     h(
       "button",
       {
         type: "button",
         className: "btn btn-secondary btn-block gdu-save-hybrid-btn",
         onclick: () => {
-          const res = inputStore.saveCurrentHybrid();
+          const res = inputStore.saveCurrentLocation();
           if (!res.ok) {
             showToast(res.error, { type: "error" });
             return;
           }
           paintSavedList();
-          showToast("Hybrid saved.", { type: "success", duration: 2500 });
+          showToast("Location saved.", { type: "success", duration: 2500 });
         },
       },
-      "Save This Hybrid"
+      "Save This Location"
     ),
-    h("h4", { className: "gdu-subheading" }, "Saved Hybrids"),
     savedListEl,
   ]);
 
@@ -715,7 +798,7 @@ export function render(container) {
     container,
     h("div", { className: "screen" }, [
       createTopBar({ title: "GDU Calculator", onHome: () => navigate("calculator") }),
-      h("main", { className: "screen-body" }, [locationCard, dateCard, hybridCard, goBtn]),
+      h("main", { className: "screen-body" }, [locationCard, hybridCard, savedCard, goBtn]),
     ])
   );
 }
@@ -741,4 +824,22 @@ function numberInput(ariaLabel, value, onChange, placeholder) {
     },
   });
   return { input };
+}
+
+/** The same chevron the Brand select draws, as an inline SVG. */
+function chevronSvg() {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 12 8");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
+  const path = document.createElementNS(ns, "path");
+  path.setAttribute("d", "M1 1.5 L6 6.5 L11 1.5");
+  path.setAttribute("fill", "none");
+  path.setAttribute("stroke", "currentColor");
+  path.setAttribute("stroke-width", "1.8");
+  path.setAttribute("stroke-linecap", "round");
+  path.setAttribute("stroke-linejoin", "round");
+  svg.appendChild(path);
+  return svg;
 }
