@@ -68,7 +68,7 @@ export function render(container) {
     h("div", { className: "screen" }, [
       createTopBar({
         title: "Settings",
-        onBack: () => navigate(rememberedOriginFor("settings") || "calculator", { _skipOriginTracking: true }),
+        onBack: () => navigate(rememberedOriginFor("settings") || "home", { _skipOriginTracking: true }),
         backLabel: "Back",
       }),
       h("main", { className: "screen-body" }, [

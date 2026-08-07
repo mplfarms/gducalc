@@ -386,6 +386,18 @@ h3.section-header:first-child {
   line-height: 1.4;
 }
 
+/* A note that reports a data problem, not just context. Muted grey reads
+   as "fine print you may skip"; a gap in the weather record changes what
+   the number above it means, so it gets weight and a rule to catch the
+   eye without shouting. */
+.field-note-warn {
+  color: #8a4b00;
+  font-weight: 600;
+  border-left: 3px solid #d98324;
+  padding-left: 8px;
+  margin-top: 8px;
+}
+
 /* Plot Details' Form ID note doubles as a manual retry button while
    unassigned (see trialDetails.js) — reset every bit of default <button>
    chrome so it still reads as plain, tappable note text rather than a
@@ -937,6 +949,17 @@ h3.section-header:first-child {
 .home-btn-primary .home-btn-badge {
   background: rgba(0, 0, 0, 0.08);
   color: var(--chrome);
+}
+
+/* The version, under the Home screen's two buttons. Inside .home-hero so
+   it sits on the brand color rather than on the page background — as a
+   sibling of the hero it put a pale strip across the bottom of an
+   otherwise full-bleed screen and rendered white text on it. */
+.home-version {
+  margin: 4px 0 0;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 0.78rem;
 }
 
 /* Informational, not an action — deliberately lighter-weight than

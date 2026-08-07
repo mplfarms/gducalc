@@ -22,21 +22,31 @@ const CORN_ICON_SVG = `
 `.trim();
 
 /**
- * @param {{title: string, onHome?: () => void, onBack?: () => void, backLabel?: string, right?: Node|Node[]}} opts
+ * @param {{title: string, onHome?: () => void, showHome?: boolean, onBack?: () => void, backLabel?: string, right?: Node|Node[]}} opts
+ *   `showHome: false` omits the Home button entirely — used by the Home
+ *   screen itself, where a button that reloads the screen you are
+ *   already looking at reads as broken.
  */
 export function createTopBar(opts) {
-  const left = [
-    h(
-      "button",
-      {
-        type: "button",
-        className: "top-bar-btn top-bar-btn-nav top-bar-btn-home",
-        "aria-label": "Home",
-        onclick: opts.onHome || (() => navigate("calculator")),
-      },
-      h("span", { className: "top-bar-home-icon", html: CORN_ICON_SVG })
-    ),
-  ];
+  const left = [];
+  if (opts.showHome !== false) {
+    left.push(
+      h(
+        "button",
+        {
+          type: "button",
+          className: "top-bar-btn top-bar-btn-nav top-bar-btn-home",
+          "aria-label": "Home",
+          // Home is the brand landing screen, not the input form. It was
+          // the input form until that screen existed, and the two things
+          // it offers — an existing location or a new one — are exactly
+          // what "home" should mean here.
+          onclick: opts.onHome || (() => navigate("home")),
+        },
+        h("span", { className: "top-bar-home-icon", html: CORN_ICON_SVG })
+      )
+    );
+  }
   if (opts.onBack) {
     left.push(
       h(

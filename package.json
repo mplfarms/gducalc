@@ -7,7 +7,7 @@
     "test": "test"
   },
   "scripts": {
-    "test": "node test/unit_gdu.mjs && node test/e2e_smoke.mjs",
+    "test": "node test/unit_gdu.mjs && node test/pdf_pages.mjs && node test/e2e_smoke.mjs",
     "shots": "node test/e2e_smoke.mjs --shots"
   },
   "keywords": [],

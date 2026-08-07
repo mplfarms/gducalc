@@ -23,5 +23,15 @@ if ("serviceWorker" in navigator) {
 // scrolls down to the Hybrid card. Never throws (see ensureLoaded).
 hybridCatalog.ensureLoaded();
 
-if (!window.location.hash) window.location.hash = "#/calculator";
+// No hash-seeding here. This used to set "#/calculator" before the
+// router ran, which silently overrode router.js's own DEFAULT_PATH and
+// made the brand landing screen unreachable from the app's most common
+// entry point: the manifest's start_url is "/" with no hash, so every
+// PWA launch and every plain reload came through here. A returning user
+// got the input form pre-filled with the last field they looked at —
+// exactly the behaviour the landing screen was added to replace — and
+// only ever saw the new screen by noticing the home icon.
+//
+// renderCurrent() handles a bare URL itself. One place decides where the
+// app opens, and it is the router.
 initRouter(document.getElementById("app"));

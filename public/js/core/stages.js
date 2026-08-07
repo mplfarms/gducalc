@@ -76,8 +76,22 @@ export const STAGE_LADDER = [
   { key: "v16", label: "Sixteen leaves", code: "V16/VT", referenceGdu: 1135, interpolated: false },
   { key: "silk", label: "Silks", code: "R1", referenceGdu: 1400, interpolated: false },
   { key: "blister", label: "Blister kernels", code: "R2", referenceGdu: 1660, interpolated: true },
-  { key: "dough", label: "Dough kernels", code: "R3", referenceGdu: 1925, interpolated: true },
-  { key: "dent", label: "Denting kernels", code: "R4/R5", referenceGdu: 2190, interpolated: true },
+  // CODES CORRECTED. These read R3 and "R4/R5" and were wrong: dough is
+  // R4 and denting is R5. The GDU VALUES are unchanged and are right —
+  // the seed-industry reference this ladder is built on (a 2,700-GDU
+  // product) puts blister at ~1,660, dough at 1,925, dent at 2,190-2,450
+  // and black layer at ~2,700, which is exactly what is here. Only the
+  // stage numbers beside the names were off by one.
+  //
+  // Worth knowing: published GDU-to-stage tables genuinely disagree.
+  // Purdue's extension calendar spaces the reproductive stages
+  // differently and would put 1,925 at milk rather than dough. This
+  // ladder follows the seed-industry 2,700-GDU reference because that is
+  // the same convention the hybrid ratings in this app are published
+  // under, and mixing the two would be worse than either. R3 (milk) has
+  // no row of its own here.
+  { key: "dough", label: "Dough kernels", code: "R4", referenceGdu: 1925, interpolated: true },
+  { key: "dent", label: "Denting kernels", code: "R5", referenceGdu: 2190, interpolated: true },
   { key: "maturity", label: "Maturity (black layer)", code: "R6", referenceGdu: 2700, interpolated: false },
 ];
 

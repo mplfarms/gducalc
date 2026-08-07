@@ -11,8 +11,24 @@ import { dailyGdu, percentile, accumulate, envelopeFromCalendarDate, offsetAtTar
 import { addDays, daysBetween, isoForYear, isoToUtcMs, utcMsToIso, monthDayOf, formatShort } from "../public/js/core/dates.js";
 import { buildSeason, baselineYearsFor, SEASON_DAYS } from "../public/js/core/season.js";
 import { STAGE_LADDER, stagesForHybrid, datedStages, REFERENCE_SILK, REFERENCE_BLACK_LAYER } from "../public/js/core/stages.js";
-import { resolve as resolveHybrid, MODELS, RM_FITTED_MIN, RM_FITTED_MAX, FITTED_N } from "../public/js/core/hybridEstimate.js";
-import { bareVariety } from "../public/js/core/hybridCatalog.js";
+import {
+  resolve as resolveHybrid,
+  MODELS,
+  RM_FITTED_MIN,
+  RM_FITTED_MAX,
+  FITTED_N,
+  RM_MIN,
+  RM_MAX,
+  SILK_MIN,
+  SILK_MAX,
+  BL_MIN,
+  BL_MAX,
+  MIN_SILK_TO_BL_SPAN,
+} from "../public/js/core/hybridEstimate.js";
+import { bareVariety, rmOutlierNote } from "../public/js/core/hybridCatalog.js";
+import { buildSummary } from "../public/js/ui/components/shareMenu.js";
+import { frostVerdict } from "../public/js/core/frostVerdict.js";
+import { noFreezeText, freezeCoverageNote, solidCaption, temperatureProvenance, recordQualityNote, thinBaselineText } from "../public/js/core/frostText.js";
 import { BRANDS, brandedHybridName } from "../public/js/ui/brand.js";
 
 let passed = 0;
@@ -301,18 +317,84 @@ test("first freeze stats find the first sub-28 day on or after Aug 1", () => {
   const res = firstFreezeStats(idx, [2020, 2021, 2022], 28, dateFns);
   assert.equal(res.medianMonthDay, "10-05");
   assert.equal(res.earliestMonthDay, "10-01");
-  // p10 of offsets {61, 65, 69} = 61 + 0.2*(65-61) = 61.8, which rounds
-  // to 62 -> Oct 2. Not Oct 1: with only three years the 10th percentile
-  // sits between the two earliest, it is not simply the earliest.
-  assert.equal(res.p10MonthDay, "10-02");
+  // Nearest-rank on offsets {61, 65, 69}: the 10th percentile is the
+  // ceil(0.1*3) = 1st earliest, i.e. offset 61 -> Oct 1. It used to
+  // interpolate to 61.8 -> Oct 2, which is a date no year in the sample
+  // actually froze on. With three years the honest statement is "the
+  // earliest of the three"; see censoredQuantile in gdu.js for why the
+  // interpolating convention was dropped for frost dates specifically.
+  assert.equal(res.p10MonthDay, "10-01");
   assert.equal(res.yearsUsed, 3);
+});
+
+test("a percentile is never interpolated into the censored tail", () => {
+  // 30 years, N of them freezing on a spread of dates between 60 and 105
+  // days after Aug 1 (latest real freeze Nov 14), the rest never freezing
+  // inside the 140-day window.
+  //
+  // The interpolating percentile() averaged a real freeze offset with the
+  // 140-day sentinel and produced a finite number below it, which then
+  // rendered as a date. Measured before the fix: 15 years freezing gave a
+  // "median" of Dec 2 and 3 years freezing gave a "1 year in 10" date of
+  // Dec 16 — both later than any freeze that ever happened there.
+  const years = Array.from({ length: 30 }, (_, i) => 1996 + i);
+  const build = (nFroze) => {
+    const series = [];
+    for (let k = 0; k < 30; k++) {
+      const y = 1996 + k;
+      const time = [];
+      const tmax = [];
+      const tmin = [];
+      const freezeAt = 60 + Math.round((45 * k) / 29);
+      for (let i = 0; i < 200; i++) {
+        const d = addDays(`${y}-07-01`, i);
+        time.push(d);
+        tmax.push(70);
+        tmin.push(k < nFroze && daysBetween(`${y}-08-01`, d) === freezeAt ? 20 : 55);
+      }
+      series.push({ time, tmax, tmin, source: "observed" });
+    }
+    return buildDailyIndex(series);
+  };
+  const LATEST_REAL = "11-14";
+  for (const n of [30, 20, 16, 15, 14, 3, 1, 0]) {
+    const r = firstFreezeStats(build(n), years, 28, dateFns);
+    assert.equal(r.yearsUsed, 30, `${n}: every year contributes, frozen or censored`);
+    assert.equal(r.yearsFroze, n);
+    for (const [label, md] of [["median", r.medianMonthDay], ["p10", r.p10MonthDay], ["earliest", r.earliestMonthDay]]) {
+      if (md !== null) assert.ok(md <= LATEST_REAL, `${n} froze: ${label} ${md} is later than any freeze in the record`);
+    }
+  }
+  // The boundary is exactly where the empirical CDF reaches p: a median
+  // needs ceil(0.5 * 30) = 15 years to have frozen, a 1-in-10 date needs
+  // ceil(0.1 * 30) = 3. Not one year more.
+  //
+  // The 3-of-30 case is the one that matters. 3 in 30 IS 1 in 10, so the
+  // date is knowable — and the UI's refusal branch says "not enough for a
+  // 1-year-in-10 date to mean anything", which at a location where three
+  // of the last thirty years froze would be exactly backwards.
+  assert.equal(firstFreezeStats(build(15), years, 28, dateFns).medianMonthDay, "10-22");
+  assert.equal(firstFreezeStats(build(14), years, 28, dateFns).medianMonthDay, null);
+  assert.equal(firstFreezeStats(build(3), years, 28, dateFns).p10MonthDay, "10-03");
+  assert.equal(firstFreezeStats(build(2), years, 28, dateFns).p10MonthDay, null);
+  // A quantile that IS reported is always a day some year actually froze
+  // on, never a blend of two.
+  const r = firstFreezeStats(build(30), years, 28, dateFns);
+  assert.equal(r.p10MonthDay, "10-03");
+  assert.equal(r.medianMonthDay, "10-22");
 });
 
 test("no freeze in the record reports nothing rather than guessing", () => {
   const idx = flatIndex("2020-07-01", 200, 70, 55);
   const res = firstFreezeStats(idx, [2020], 28, dateFns);
+  // The year contributed a censored observation ("no freeze in 140 days"),
+  // so it counts toward yearsUsed but not yearsFroze. With every year
+  // censored there is no date to report at any percentile.
   assert.equal(res.medianMonthDay, null);
-  assert.equal(res.yearsUsed, 0);
+  assert.equal(res.p10MonthDay, null);
+  assert.equal(res.earliestMonthDay, null);
+  assert.equal(res.yearsFroze, 0);
+  assert.equal(res.yearsUsed, 1);
 });
 
 // ---------------------------------------------------------------
@@ -382,6 +464,11 @@ test("the current-season projection splices onto observed data without a jump", 
     lastObservedIso: "2026-06-30",
   });
 
+  // With no gap, the derived dates match what the caller downloaded.
+  assert.equal(s.lastObservedIso, "2026-06-30");
+  assert.equal(s.lastKnownIso, "2026-06-30");
+  assert.equal(s.truncatedByGap, false);
+
   const current = s.scenarios.find((x) => x.key === "current");
   assert.equal(current.solidThroughOffset, 60); // May 1 + 60 = Jun 30
   assert.equal(current.cum[60], 61 * 20); // 61 observed days at 20/day
@@ -394,6 +481,122 @@ test("the current-season projection splices onto observed data without a jump", 
   const normalRow = s.rows.find((r) => r.key === "normal");
   const currentRow = s.rows.find((r) => r.key === "current-normal");
   assert.ok(currentRow.silkOffset < normalRow.silkOffset, "hot start should silk earlier than normal");
+});
+
+test("a mid-season gap relabels the totals instead of dating them to a day they don't cover", () => {
+  // Every screen that prints a GDU total prints "Through <date>" beside
+  // it, reading season.lastObservedIso. That field used to be the
+  // caller's download horizon echoed straight back, so a hole in the
+  // record produced a May-30 total captioned "Through Jul 1" — the two
+  // most load-bearing numbers on the status card disagreeing silently.
+  const histTime = allDays("1995-01-01", "2027-06-30");
+  const series = [{ time: histTime, tmax: histTime.map(() => 70), tmin: histTime.map(() => 50), source: "observed" }];
+  const idx = buildDailyIndex(series);
+  delete idx["2026-05-31"]; // hole 30 days after planting
+
+  const s = buildSeason({
+    index: idx,
+    plantingIso: "2026-05-01",
+    gduToSilk: 1250,
+    gduToBlackLayer: 2650,
+    lastKnownIso: "2026-07-01",
+    lastObservedIso: "2026-07-01",
+  });
+
+  assert.equal(s.knownEndOffset, 29); // May 1 + 29 = May 30
+  assert.equal(s.lastKnownIso, "2026-05-30");
+  assert.equal(s.lastObservedIso, "2026-05-30");
+  assert.equal(s.truncatedByGap, true);
+  // 30 days at 10 GDU/day, and the label now names the day it stops on.
+  assert.equal(s.gduToDate, 300);
+  // The caller's own numbers are still available, just not passed off as
+  // coverage.
+  assert.equal(s.requestedKnownIso, "2026-07-01");
+});
+
+test("a complete past season is not accused of having a data gap", () => {
+  // horizonOffset is daysBetween(planting, lastKnownIso). For a 2024
+  // planting looked up in 2026 that is ~800 days, while knownEndOffset is
+  // clamped to the 220-day season — so "the record stopped short of the
+  // horizon" was permanently true and lit an orange data-gap warning on
+  // every historical lookup, which is a supported path with its own
+  // "Looking back at the 2024 season" banner.
+  const time = allDays("1995-01-01", "2026-08-06");
+  const idx = buildDailyIndex([{ time, tmax: time.map(() => 80), tmin: time.map(() => 60), source: "observed" }]);
+  const s = buildSeason({
+    index: idx,
+    plantingIso: "2024-05-01",
+    gduToSilk: 1250,
+    gduToBlackLayer: 2650,
+    lastKnownIso: "2026-08-06",
+    lastObservedIso: "2026-08-06",
+  });
+  assert.equal(s.knownEndOffset, SEASON_DAYS - 1);
+  assert.equal(s.truncatedByGap, false);
+});
+
+test("a hole on the planting day is reported, not silently blank", () => {
+  // knownEndOffset lands at -1, which the first version of the flag
+  // required to be >= 0 — so the single most truncated case produced no
+  // warning at all, and the results screen just had nothing on it.
+  const time = allDays("1995-01-01", "2026-08-06");
+  const idx = buildDailyIndex([{ time, tmax: time.map(() => 80), tmin: time.map(() => 60), source: "observed" }]);
+  delete idx["2026-05-01"];
+  const s = buildSeason({
+    index: idx,
+    plantingIso: "2026-05-01",
+    gduToSilk: 1250,
+    gduToBlackLayer: 2650,
+    lastKnownIso: "2026-08-06",
+    lastObservedIso: "2026-08-06",
+  });
+  assert.equal(s.knownEndOffset, -1);
+  assert.equal(s.gduToDate, null);
+  assert.equal(s.truncatedByGap, true);
+  assert.equal(s.lastKnownIso, null);
+});
+
+test("a planting date that hasn't arrived is not reported as a data gap", () => {
+  const time = allDays("1995-01-01", "2026-08-06");
+  const idx = buildDailyIndex([{ time, tmax: time.map(() => 80), tmin: time.map(() => 60), source: "observed" }]);
+  const s = buildSeason({
+    index: idx,
+    plantingIso: "2027-05-01",
+    gduToSilk: 1250,
+    gduToBlackLayer: 2650,
+    lastKnownIso: "2026-08-06",
+    lastObservedIso: "2026-08-06",
+  });
+  assert.equal(s.truncatedByGap, false);
+  // The derived coverage dates are null (nothing is covered yet), but the
+  // caller's own horizon is kept for the sentences that describe the
+  // download rather than the coverage.
+  assert.equal(s.lastObservedIso, null);
+  assert.equal(s.requestedObservedIso, "2026-08-06");
+});
+
+test("the climatology rows are labelled climatology, not forecast", () => {
+  // These three describe the location's 30-year record. They were being
+  // fed observedThroughOffset = -1 against a full-season horizon, which
+  // made basisFor call every day of them "forecast".
+  const histTime = allDays("1995-01-01", "2027-06-30");
+  const idx = buildDailyIndex([{ time: histTime, tmax: histTime.map(() => 86), tmin: histTime.map(() => 50), source: "observed" }]);
+  const s = buildSeason({
+    index: idx,
+    plantingIso: "2026-05-01",
+    gduToSilk: 1250,
+    gduToBlackLayer: 2650,
+    lastKnownIso: "2026-06-30",
+    lastObservedIso: "2026-06-30",
+  });
+  for (const key of ["hot", "normal", "cool"]) {
+    const row = s.rows.find((r) => r.key === key);
+    assert.equal(row.silkBasis, "climatology", `${key} silk`);
+    assert.equal(row.blackLayerBasis, "climatology", `${key} black layer`);
+  }
+  // Last year really did happen, so it stays "actual".
+  const ly = s.rows.find((r) => r.key === "lastYear");
+  assert.equal(ly.silkBasis, "actual");
 });
 
 test("a planting date in the future yields no current-season scenario", () => {
@@ -685,20 +888,68 @@ test("out-of-range inputs are called out as typos, not silently estimated from",
   assert.equal(resolveHybrid({ rm: 400 }).ok, false);
 });
 
-test("estimates always keep silk below black layer across the whole valid range", () => {
-  for (let rm = 60; rm <= 135; rm++) {
-    const r = resolveHybrid({ rm });
-    assert.equal(r.ok, true, `RM ${rm} rejected`);
-    assert.ok(r.silk.value < r.blackLayer.value, `RM ${rm}: silk ${r.silk.value} >= BL ${r.blackLayer.value}`);
+test("an estimate is never returned outside the range the app calls real", () => {
+  // The contract is NOT "every legal input produces an answer" — that was
+  // the old assertion, and it was satisfied by returning silk 400 -> black
+  // layer 488, a number the same function rejects as a typo when it is
+  // typed in. The contract is: whatever comes back ok is ordered, inside
+  // the hard bounds, and has room for grain fill. Anything else is
+  // refused with a message rather than estimated.
+  const check = (input, label) => {
+    const r = resolveHybrid(input);
+    if (!r.ok) {
+      assert.ok(typeof r.error === "string" && r.error.length > 0, `${label}: rejected with no message`);
+      return;
+    }
+    assert.ok(r.silk.value < r.blackLayer.value, `${label}: silk ${r.silk.value} >= BL ${r.blackLayer.value}`);
+    assert.ok(r.silk.value >= SILK_MIN && r.silk.value <= SILK_MAX, `${label}: silk ${r.silk.value} out of bounds`);
+    assert.ok(r.blackLayer.value >= BL_MIN && r.blackLayer.value <= BL_MAX, `${label}: BL ${r.blackLayer.value} out of bounds`);
+    assert.ok(r.blackLayer.value - r.silk.value >= MIN_SILK_TO_BL_SPAN, `${label}: span too small`);
+  };
+  for (let rm = 60; rm <= 135; rm++) check({ rm }, `RM ${rm}`);
+  for (let silk = 400; silk <= 2200; silk += 25) check({ gduToSilk: silk }, `silk ${silk}`);
+  for (let bl = 900; bl <= 4000; bl += 50) check({ gduToBlackLayer: bl }, `BL ${bl}`);
+});
+
+test("every RM in the accepted range still produces an answer", () => {
+  // RM is the fallback path with no other information to fall back to, so
+  // unlike the GDU paths it has to work everywhere the input validator
+  // lets a number through.
+  for (let rm = RM_MIN; rm <= RM_MAX; rm++) {
+    assert.equal(resolveHybrid({ rm }).ok, true, `RM ${rm} rejected`);
   }
-  for (let silk = 400; silk <= 2200; silk += 25) {
-    const r = resolveHybrid({ gduToSilk: silk });
-    assert.ok(r.ok && r.silk.value < r.blackLayer.value, `silk ${silk} produced a bad pair`);
-  }
-  for (let bl = 900; bl <= 4000; bl += 50) {
-    const r = resolveHybrid({ gduToBlackLayer: bl });
-    assert.ok(r.ok && r.silk.value < r.blackLayer.value, `BL ${bl} produced a bad pair`);
-  }
+});
+
+test("an extreme-but-legal GDU entry is refused, not extrapolated into nonsense", () => {
+  // silk 400 is inside SILK_MIN, so the entry itself is accepted. The
+  // black layer it implies (488) is not, and used to be handed back with
+  // a "typically within ±46 GDU" note attached.
+  const low = resolveHybrid({ gduToSilk: 400 });
+  assert.equal(low.ok, false);
+  assert.match(low.error, /outside anything real/);
+
+  const high = resolveHybrid({ gduToSilk: 2200 });
+  assert.equal(high.ok, false);
+
+  // The edges of what still works, so a future refit that moves them
+  // shows up here rather than in the field.
+  assert.equal(resolveHybrid({ gduToSilk: 575 }).ok, true);
+  assert.equal(resolveHybrid({ gduToSilk: 550 }).ok, false);
+  assert.equal(resolveHybrid({ gduToSilk: 1875 }).ok, true);
+  assert.equal(resolveHybrid({ gduToSilk: 1900 }).ok, false);
+});
+
+test("a silk and black layer too close together is refused, not collapsed", () => {
+  // stages.js spaces every reproductive stage between these two numbers.
+  // A 4 GDU gap put blister, dough, dent and maturity on one calendar day.
+  const tight = resolveHybrid({ gduToSilk: 1400, gduToBlackLayer: 1404 });
+  assert.equal(tight.ok, false);
+  assert.match(tight.error, /no room for grain fill/);
+
+  // The narrowest real span in the built-in list is 850, so nothing that
+  // actually ships is anywhere near the 200 threshold.
+  assert.equal(resolveHybrid({ gduToSilk: 1400, gduToBlackLayer: 1600 }).ok, true);
+  assert.equal(resolveHybrid({ gduToSilk: 1400, gduToBlackLayer: 1599 }).ok, false);
 });
 
 test("extrapolation past the fitted RM range is flagged", () => {
@@ -733,12 +984,55 @@ test("the RM outlier the app flags is still the only one in the list", () => {
   // 89-58 SSPRORIB survived the 72 -> 134 -> 132 refreshes. If a data refresh ever
   // introduces another, this fails and someone looks at it rather than
   // the app quietly flagging two hybrids nobody reviewed.
-  const median = (a) => { const x = [...a].sort((p, q) => p - q); const m = Math.floor(x.length / 2); return x.length % 2 ? x[m] : (x[m - 1] + x[m]) / 2; };
-  const flagged = catalogDoc.hybrids.filter((hy) => {
-    const nb = catalogDoc.hybrids.filter((o) => o.v !== hy.v && Math.abs(o.rm - hy.rm) <= 2).map((o) => o.b);
-    return nb.length >= 3 && Math.abs(hy.b - median(nb)) > 250;
-  });
-  assert.deepEqual(flagged.map((x) => x.v), ["89-58 SSPRORIB"]);
+  //
+  // This drives rmOutlierNote itself rather than a copy of its rule. The
+  // copy that used to live here missed the rebadge dedupe, the two-sided
+  // window and the silk check entirely, so it could have kept passing
+  // while the shipped function did something different.
+  const list = catalogDoc.hybrids.map((r) => ({ variety: r.v, rm: r.rm, gduToSilk: r.s, gduToBlackLayer: r.b }));
+  const flagged = list.filter((hy) => rmOutlierNote(hy, list) !== null);
+  assert.deepEqual(flagged.map((x) => x.variety), ["89-58 SSPRORIB"]);
+  // And it is flagged on black layer, which is the number that is off.
+  assert.match(rmOutlierNote(flagged[0], list), /GDU to black layer/);
+});
+
+test("the outlier check does not fire just for sitting at the end of the list", () => {
+  // A one-sided window makes the median "everything longer than me", so
+  // the shortest hybrid gets flagged for being short. Three neighbours
+  // all above it used to be enough to trigger that.
+  const list = [
+    { variety: "shortest", rm: 80, gduToSilk: 1000, gduToBlackLayer: 1800 },
+    { variety: "a", rm: 81, gduToSilk: 1100, gduToBlackLayer: 2100 },
+    { variety: "b", rm: 82, gduToSilk: 1120, gduToBlackLayer: 2150 },
+    { variety: "c", rm: 82, gduToSilk: 1130, gduToBlackLayer: 2200 },
+  ];
+  assert.equal(rmOutlierNote(list[0], list), null);
+});
+
+test("rebadges of one hybrid do not vote as three separate opinions", () => {
+  // Same genetics, three trait suffixes, identical numbers. They cleared
+  // the "at least three neighbours" bar on their own and pulled the
+  // median onto their shared value.
+  const twin = { rm: 90, gduToSilk: 1200, gduToBlackLayer: 2200 };
+  const list = [
+    { variety: "target", rm: 90, gduToSilk: 1200, gduToBlackLayer: 2600 },
+    { variety: "twin RIB", ...twin },
+    { variety: "twin PCE", ...twin },
+    { variety: "twin CONV", ...twin },
+  ];
+  // Three copies of one hybrid, all on the same side — not a comparison.
+  assert.equal(rmOutlierNote(list[0], list), null);
+});
+
+test("a silk rating far off its maturity is flagged too", () => {
+  // Silk drives every vegetative stage date, and used to go unchecked.
+  const list = [
+    { variety: "target", rm: 95, gduToSilk: 1600, gduToBlackLayer: 2400 },
+    { variety: "a", rm: 94, gduToSilk: 1240, gduToBlackLayer: 2380 },
+    { variety: "b", rm: 95, gduToSilk: 1250, gduToBlackLayer: 2400 },
+    { variety: "c", rm: 96, gduToSilk: 1260, gduToBlackLayer: 2420 },
+  ];
+  assert.match(rmOutlierNote(list[0], list), /GDU to silk/);
 });
 
 test("every catalog hybrid can be recovered from its RM alone within a sane bound", () => {
@@ -759,6 +1053,321 @@ test("an RM-only hybrid still produces a complete, ordered stage ladder", () => 
   }
   assert.equal(stages.find((x) => x.key === "silk").gdu, r.silk.value);
   assert.equal(stages.find((x) => x.key === "maturity").gdu, r.blackLayer.value);
+});
+
+// ---------------------------------------------------------------
+console.log("\nfrost verdict");
+// ---------------------------------------------------------------
+
+/**
+ * A season stub carrying only what frostVerdict reads. Built by hand
+ * rather than from buildSeason because the point is to drive every
+ * branch, and manufacturing weather that lands black layer exactly N
+ * days either side of a freeze date is a fixture about the weather.
+ */
+function verdictSeason({ blackLayerIso, p10, median }) {
+  return {
+    plantingYear: 2026,
+    killingFreeze: { p10MonthDay: p10, medianMonthDay: median, yearsUsed: 30, yearsFroze: median ? 29 : 8 },
+    rows: [
+      { key: "current-normal", blackLayerIso },
+      { key: "current-hot", blackLayerIso },
+      { key: "current-cool", blackLayerIso },
+    ],
+  };
+}
+const VERDICT_HYBRID = { gduToBlackLayer: 2650 };
+
+test("a comfortable margin reads as comfortable and quotes both dates", () => {
+  // Black layer Sep 20, 1-in-10 freeze Oct 10 -> 20 days; median Oct 24 -> 34.
+  const v = frostVerdict(verdictSeason({ blackLayerIso: "2026-09-20", p10: "10-10", median: "10-24" }), VERDICT_HYBRID);
+  assert.equal(v.tone, "good");
+  assert.ok(v.text.startsWith("20 days of margin"), v.text);
+  assert.ok(v.text.includes("34 against the median"), v.text);
+});
+
+test("a thin margin is called tight, not comfortable", () => {
+  const v = frostVerdict(verdictSeason({ blackLayerIso: "2026-10-05", p10: "10-10", median: "10-24" }), VERDICT_HYBRID);
+  assert.equal(v.tone, "warn");
+  assert.ok(v.text.startsWith("Only 5 days of margin"), v.text);
+});
+
+test("nine days is tight and ten is comfortable — the boundary, pinned", () => {
+  assert.equal(frostVerdict(verdictSeason({ blackLayerIso: "2026-10-01", p10: "10-10", median: "10-24" }), VERDICT_HYBRID).tone, "warn");
+  assert.equal(frostVerdict(verdictSeason({ blackLayerIso: "2026-09-30", p10: "10-10", median: "10-24" }), VERDICT_HYBRID).tone, "good");
+});
+
+test("black layer past the 1-in-10 freeze is a bad verdict with a positive day count", () => {
+  const v = frostVerdict(verdictSeason({ blackLayerIso: "2026-10-20", p10: "10-10", median: "10-24" }), VERDICT_HYBRID);
+  assert.equal(v.tone, "bad");
+  assert.ok(v.text.includes("caught 10 days short of black layer"), v.text);
+  assert.ok(v.text.includes("Against the median freeze it has 4 days"), v.text);
+});
+
+test("black layer past the MEDIAN freeze never prints a negative day count", () => {
+  // The old wording did the subtraction unconditionally and rendered
+  // "Against the median freeze it has -13 days", which is not a sentence.
+  const v = frostVerdict(verdictSeason({ blackLayerIso: "2026-11-06", p10: "10-10", median: "10-24" }), VERDICT_HYBRID);
+  assert.equal(v.tone, "bad");
+  // A leading minus is always preceded by a space; "1-year-in-10" is not.
+  assert.ok(!/\s-\d/.test(v.text), `negative day count leaked: ${v.text}`);
+  assert.ok(v.text.includes("Even against the median freeze it is 13 days short"), v.text);
+});
+
+test("a censored median is a clause, not a fragment after a full stop", () => {
+  // "…short of black layer. and the median year never freezes at all."
+  const bad = frostVerdict(verdictSeason({ blackLayerIso: "2026-10-20", p10: "10-10", median: null }), VERDICT_HYBRID);
+  assert.equal(bad.tone, "bad");
+  assert.ok(!/\. [a-z]/.test(bad.text), `lowercase fragment after a full stop: ${bad.text}`);
+  assert.ok(bad.text.includes("In the median year there is no killing freeze at all"), bad.text);
+
+  const good = frostVerdict(verdictSeason({ blackLayerIso: "2026-09-01", p10: "10-10", median: null }), VERDICT_HYBRID);
+  assert.equal(good.tone, "good");
+  assert.ok(good.text.includes("and no killing freeze at all in the median year"), good.text);
+});
+
+test("a hybrid that never reaches black layer is called too long, not scored", () => {
+  const season = verdictSeason({ blackLayerIso: null, p10: "10-10", median: "10-24" });
+  const v = frostVerdict(season, VERDICT_HYBRID);
+  assert.equal(v.tone, "bad");
+  assert.ok(v.text.includes("doesn't reach black layer at all"), v.text);
+  assert.ok(v.text.includes("2,650 GDU"), v.text);
+});
+
+test("the verdict is scored on the LATEST finish, not the average one", () => {
+  // The risk question is "could this fail", so the cool finish decides.
+  const season = verdictSeason({ blackLayerIso: "2026-09-20", p10: "10-10", median: "10-24" });
+  season.rows[2].blackLayerIso = "2026-10-15"; // cool finish, past the p10
+  assert.equal(frostVerdict(season, VERDICT_HYBRID).tone, "bad");
+});
+
+test("nothing to score against returns null rather than a sentence", () => {
+  assert.equal(frostVerdict(verdictSeason({ blackLayerIso: "2026-09-20", p10: "10-10", median: "10-24" }), null), null);
+  assert.equal(frostVerdict(verdictSeason({ blackLayerIso: "2026-09-20", p10: null, median: null }), VERDICT_HYBRID), null);
+  assert.equal(frostVerdict(null, VERDICT_HYBRID), null);
+});
+
+// ---------------------------------------------------------------
+console.log("\nshared frost and provenance wording");
+// ---------------------------------------------------------------
+
+test("an unreadable record is reported as a data problem, not as a finding", () => {
+  // Every year holed before its first freeze. Saying "no freeze appears
+  // in this location's 30-year record" here asserts a finding from a
+  // record that could not be read.
+  const t = noFreezeText({ yearsUsed: 0, yearsFroze: 0, yearsSkipped: 30 });
+  assert.match(t, /data problem, not a finding/);
+  assert.ok(!/No 28 °F freeze appears/.test(t), t);
+});
+
+test("a genuinely frost-free location says so, and a nearly-frost-free one does not", () => {
+  assert.match(noFreezeText({ yearsUsed: 30, yearsFroze: 0 }), /No 28 °F freeze appears in this location's 30-year record/);
+  const few = noFreezeText({ yearsUsed: 30, yearsFroze: 2 });
+  assert.match(few, /Only 2 of the last 30 years/);
+  assert.ok(!/No 28 °F freeze appears/.test(few), few);
+});
+
+test("the freeze coverage note fires below 90% and stays quiet above it", () => {
+  assert.equal(freezeCoverageNote({ yearsUsed: 30, yearsFroze: 27 }), ""); // exactly 90%
+  assert.match(freezeCoverageNote({ yearsUsed: 30, yearsFroze: 26 }), /^26 of 30 years reached 28 °F/);
+  assert.match(freezeCoverageNote({ yearsUsed: 28, yearsFroze: 22, yearsSkipped: 2 }), /\(2 more had gaps and were left out\)/);
+  // Zero froze is the no-freeze case, which has its own wording.
+  assert.equal(freezeCoverageNote({ yearsUsed: 30, yearsFroze: 0 }), "");
+  assert.equal(freezeCoverageNote(null), "");
+});
+
+test("the chart caption always names the solid line when there is one", () => {
+  const fs2 = (iso) => (iso ? iso.slice(5) : "—");
+  const base = { seasonDays: 220, lastObservedIso: "2026-08-06", lastKnownIso: "2026-08-21" };
+  // Observed then forecast.
+  assert.match(solidCaption({ ...base, observedEndOffset: 97, knownEndOffset: 112 }, fs2), /observed through 08-06 plus forecast through 08-21/);
+  // Forecast only — a planting date a few days out.
+  assert.match(solidCaption({ ...base, observedEndOffset: -1, knownEndOffset: 12, lastObservedIso: null }, fs2), /^Solid = forecast through 08-21/);
+  // Observed only. This branch used to return a bare "Dashed = projected."
+  // and say nothing about the solid line at all — which is every past
+  // season, every failed forecast fetch and every gap-truncated run.
+  const obsOnly = solidCaption({ ...base, observedEndOffset: 97, knownEndOffset: 97 }, fs2);
+  assert.match(obsOnly, /Solid = observed through 08-06/);
+  // A season entirely on the books has nothing dashed to describe.
+  const whole = solidCaption({ ...base, observedEndOffset: 219, knownEndOffset: 219 }, fs2);
+  assert.ok(!/Dashed/.test(whole), whole);
+  // Nothing known at all.
+  assert.equal(solidCaption({ ...base, observedEndOffset: -1, knownEndOffset: -1 }, fs2), "Dashed = projected.");
+});
+
+test('"entirely on the books" is only said when the whole season is known', () => {
+  // Honours the options argument, so `{ withYear: true }` is actually
+  // pinned. A fake that ignored it left that call free to be dropped.
+  const fs2 = (iso, opts) => (iso ? (opts && opts.withYear ? iso : iso.slice(5)) : "—");
+  const base = { seasonDays: 220, lastObservedIso: "2026-08-06", lastKnownIso: "2026-08-06", requestedObservedIso: "2026-08-06", requestedKnownIso: "2026-08-21" };
+  // Mid-season with no forecast — a failed fetch or a truncating gap.
+  // This used to announce a completed season one bullet above the bullet
+  // reporting the forecast failure.
+  const midSeason = temperatureProvenance({ ...base, observedEndOffset: 97, knownEndOffset: 97 }, fs2);
+  assert.ok(!/on the books/.test(midSeason), midSeason);
+  assert.match(midSeason, /No forecast is included in this run/);
+  // The date it names carries the year — a bare "Aug 6" on a card that
+  // may be describing a 2024 season is not enough.
+  assert.match(midSeason, /through 2026-08-06/);
+  // A season that really is complete.
+  assert.match(temperatureProvenance({ ...base, observedEndOffset: 219, knownEndOffset: 219 }, fs2), /entirely on the books/);
+  // The ordinary in-season case names the download horizon.
+  const inSeason = temperatureProvenance({ ...base, observedEndOffset: 97, knownEndOffset: 112 }, fs2);
+  assert.match(inSeason, /16-day forecast through 08-21/);
+  assert.match(inSeason, /current season through 2026-08-06/);
+});
+
+test("a gap and a thin baseline are reported on every surface, not just the screen", () => {
+  // Both of these used to be screen-only, so the PDF a grower keeps and
+  // the text a rep forwards were the two surfaces with no caveat on them.
+  const clean = { truncatedByGap: false, remainingYearsUsed: new Array(30), yearsUsed: new Array(30), currentStage: {}, lastKnownIso: "2026-08-06" };
+  assert.equal(recordQualityNote(clean, 30), "");
+
+  const gapped = { ...clean, truncatedByGap: true };
+  assert.match(recordQualityNote(gapped, 30), /gap partway through this season/);
+
+  // A hole on the planting day leaves no total at all, and says so
+  // differently.
+  assert.match(recordQualityNote({ ...gapped, lastKnownIso: null }, 30), /gap starting on the planting date/);
+
+  const thin = { ...clean, remainingYearsUsed: new Array(8), yearsUsed: new Array(6) };
+  const t = recordQualityNote(thin, 30);
+  assert.match(t, /whole-season rows come from 6 complete years, not 30/);
+  assert.match(t, /hot and cool finishes come from 8 years/);
+
+  // Both at once read as one sentence, not two glued together.
+  const both = recordQualityNote({ ...thin, truncatedByGap: true }, 30);
+  assert.match(both, /^Data quality: the weather record has a gap.*; the baseline is thin — /);
+  assert.ok(!/\.\s*\./.test(both), both);
+});
+
+test("the thin-baseline clause carries no lead-in of its own", () => {
+  // The screen says "Thin baseline for this location — <clause>" and the
+  // PDF says "Data quality: the baseline is thin — <clause>". Returning
+  // the bare clause is what lets both do that without one of them
+  // regex-stripping the other's wording, which is what the first version
+  // did.
+  const t = thinBaselineText({ remainingYearsUsed: new Array(8), yearsUsed: new Array(30), currentStage: {} }, 30);
+  assert.ok(!/^the baseline is thin/.test(t), t);
+  // Standalone, with no whole-season clause in front to lend it a noun.
+  assert.ok(!/come from \d+,/.test(t), `dangling numeral: ${t}`);
+  assert.match(t, /^the hot and cool finishes come from 8 years/);
+  assert.equal(thinBaselineText({ remainingYearsUsed: new Array(30), yearsUsed: new Array(30), currentStage: {} }, 30), "");
+});
+
+// ---------------------------------------------------------------
+console.log("\nshared summary text");
+// ---------------------------------------------------------------
+
+/** A real season a rep might share, built from flat 18-GDU days. */
+function shareableSeason(killingFreeze) {
+  const time = allDays("1995-01-01", "2026-08-06");
+  const idx = buildDailyIndex([{ time, tmax: time.map(() => 86), tmin: time.map(() => 50), source: "observed" }]);
+  const s = buildSeason({
+    index: idx,
+    plantingIso: "2026-05-01",
+    gduToSilk: 1250,
+    gduToBlackLayer: 2650,
+    lastKnownIso: "2026-08-06",
+    lastObservedIso: "2026-08-06",
+  });
+  if (killingFreeze) s.killingFreeze = killingFreeze;
+  return s;
+}
+
+const SHARE_HYBRID = {
+  label: "09-90 PCE",
+  gduToSilk: 1250,
+  gduToBlackLayer: 2650,
+  rm: 99,
+  silk: { value: 1250, source: "entered", model: null },
+  blackLayer: { value: 2650, source: "entered", model: null },
+};
+
+test("the shared text collapses this season into one line per stage", () => {
+  // season.rows carries three current-* rows that share every observed
+  // and forecast day, so their dates are frequently identical. The screen
+  // and the PDF collapse them; the share text printed all three, which is
+  // exactly the "looks like a bug in the app" presentation the collapse
+  // exists to avoid.
+  const season = shareableSeason();
+  const text = buildSummary({
+    season,
+    hybrid: SHARE_HYBRID,
+    location: { label: "Missouri Valley, IA" },
+    rows: season.rows.filter((r) => !r.key.startsWith("current-")),
+  });
+  assert.ok(!text.includes("normal finish"), "the three collapsed rows must not appear");
+  assert.ok(!text.includes("hot finish"));
+  assert.ok(!text.includes("cool finish"));
+  assert.ok(text.includes("This season:"));
+  assert.match(text, /silk .*\(reached\)/);
+});
+
+test("a censored median never leaves a phrase where the text expects a date", () => {
+  // "Median first 28 °F freeze no freeze in over half of years" was going
+  // out in the body of a message a rep sends a grower.
+  const text = buildSummary({
+    season: shareableSeason({ medianMonthDay: null, p10MonthDay: "10-03", earliestMonthDay: "09-30", yearsUsed: 30, yearsFroze: 6, yearsSkipped: 0 }),
+    hybrid: SHARE_HYBRID,
+    location: { label: "Missouri Valley, IA" },
+    rows: [],
+  });
+  assert.ok(!/Median first 28 °F freeze [a-z]/.test(text), `phrase substituted into a date slot: ${text}`);
+  assert.ok(text.includes("1 year in 10 sees 28 °F by Oct 3"));
+  assert.ok(text.includes("no median freeze date"));
+
+  // And the ordinary case still reads as it always did.
+  const normal = buildSummary({
+    season: shareableSeason({ medianMonthDay: "10-22", p10MonthDay: "10-03", earliestMonthDay: "09-30", yearsUsed: 30, yearsFroze: 29, yearsSkipped: 0 }),
+    hybrid: SHARE_HYBRID,
+    location: { label: "Missouri Valley, IA" },
+    rows: [],
+  });
+  assert.ok(normal.includes("Median first 28 °F freeze Oct 22"));
+});
+
+// ---------------------------------------------------------------
+console.log("\nservice worker precache");
+// ---------------------------------------------------------------
+
+test("every shipped JS module is in the service worker's precache list", () => {
+  // The shell is cache-first, so a module missing from this list 404s on
+  // a cold offline load and the app fails to boot with no useful error.
+  // v3.5 added core/frostVerdict.js and very nearly shipped without the
+  // entry — nothing in the online test suite can see the difference.
+  const sw = fs.readFileSync(new URL("../public/sw.js", import.meta.url), "utf8");
+  const listed = new Set(sw.match(/"\/js\/[^"]+\.js"/g).map((s) => s.slice(1, -1)));
+
+  const onDisk = [];
+  const walk = (dir, prefix) => {
+    for (const entry of fs.readdirSync(new URL(dir, import.meta.url), { withFileTypes: true })) {
+      if (entry.isDirectory()) walk(`${dir}${entry.name}/`, `${prefix}${entry.name}/`);
+      else if (entry.name.endsWith(".js")) onDisk.push(`${prefix}${entry.name}`);
+    }
+  };
+  walk("../public/js/", "/js/");
+
+  const missing = onDisk.filter((p) => !listed.has(p));
+  assert.deepEqual(missing, [], `not precached: ${missing.join(", ")}`);
+
+  // And the reverse: an entry for a file that no longer exists makes
+  // addAll() reject, which fails the whole install and leaves the app
+  // with no cache at all rather than a partial one.
+  const stale = [...listed].filter((p) => !onDisk.includes(p));
+  assert.deepEqual(stale, [], `precached but absent: ${stale.join(", ")}`);
+});
+
+test("the app version and the cache version agree", () => {
+  const app = fs.readFileSync(new URL("../public/js/version.js", import.meta.url), "utf8");
+  const sw = fs.readFileSync(new URL("../public/sw.js", import.meta.url), "utf8");
+  const appV = /APP_VERSION = "v([\d.]+)/.exec(app);
+  const swV = /CACHE_VERSION = "v([\d.]+)/.exec(sw);
+  assert.ok(appV && swV, "both version strings must be findable");
+  // They are two different formats on purpose ("v3.5 (Beta)" vs
+  // "v3.5-beta"), but the number has to match or a release ships new code
+  // under the old cache key and nobody gets the update.
+  assert.equal(appV[1], swV[1]);
 });
 
 // ---------------------------------------------------------------
@@ -1021,6 +1630,19 @@ test("the catalog still matches a hybrid once it carries a brand code", () => {
   assert.equal(bareVariety("09-90 PCE"), "09-90 PCE");
   assert.equal(bareVariety("DKC62-08"), "DKC62-08");
   assert.equal(bareVariety("XY 12-34"), "XY 12-34");
+});
+
+test("a half-typed brand code searches as nothing, not as the literal letters", () => {
+  // search() runs every keystroke. "NC " used to trim to "NC", miss the
+  // \s+ in the strip pattern, and be searched as the substring "nc" —
+  // which no variety contains, so the picker went blank mid-typing.
+  assert.equal(bareVariety("NC "), "");
+  assert.equal(bareVariety("NC"), "");
+  assert.equal(bareVariety("  MW  "), "");
+  assert.equal(bareVariety("cr"), "");
+  // A real name that merely starts with those letters is untouched.
+  assert.equal(bareVariety("NCX 12"), "NCX 12");
+  assert.equal(bareVariety("CRUZ"), "CRUZ");
 });
 
 // ---------------------------------------------------------------

@@ -10,10 +10,22 @@
 // (792 less two 36 pt margins and the 26 pt footer), and the two charts
 // are the flexible part: if something has to give, they shrink before
 // the caveats get cut — and when there IS room, they take it, so the two
-// sheets come out full rather than half empty. Two tests fail if the
-// output runs to three: one on a fully-specified hybrid, one on an
-// RM-estimated one, which carries an extra callout and an extra method
-// bullet and is the variant most likely to spill.
+// sheets come out full rather than half empty.
+//
+// That "charts shrink first" was aspiration rather than behaviour until
+// v3.5: the heights were hard-coded, so a run carrying every conditional
+// caveat simply spilled. flexBudget() below now MEASURES this run's
+// conditional blocks and takes the total out of the stage chart. Five
+// blocks are conditional and their heights vary — see flexBudget's own
+// list, which is the authoritative one.
+//
+// test/pdf_pages.mjs drives this directly with each block forced on,
+// alone and in combination, and asserts for each case that the block it
+// is named after actually rendered. The e2e suite's own page-count checks
+// cannot reach any of these branches — its weather freezes in all 30
+// years and its hybrids are inside the fitted range — which is how the
+// v3.5 audit's added text pushed the report to three sheets with the
+// suite green.
 //
 // ---------------------------------------------------------------
 // Why the charts are drawn rather than screenshotted
@@ -45,8 +57,11 @@
 // product rather than a generic export.
 
 import { addDays, daysBetween, formatShort } from "./dates.js";
-import { sourceLabel, FITTED_N } from "./hybridEstimate.js";
+import { sourceLabel, extrapolationCaveat, FITTED_N } from "./hybridEstimate.js";
 import { dayLimitKind } from "./gdu.js";
+import { frostVerdict } from "./frostVerdict.js";
+import { BASELINE_YEARS } from "./season.js";
+import { noFreezeText, freezeCoverageNote, solidCaption, temperatureProvenance, recordQualityNote, MIN_TRUSTWORTHY_YEARS } from "./frostText.js";
 
 const PAGE_W = 612;
 const PAGE_H = 792;
@@ -81,6 +96,18 @@ const RULE = [214, 214, 214];
    encodes the crop rather than the label on the bag. */
 const RAMP_VEG_RGB = [47, 125, 79];
 const RAMP_REP_RGB = [218, 145, 0];
+
+/* Shared between the measurement in flexBudget() and the draw call, so
+   the two cannot disagree about font or size. Bold measures WIDER than
+   normal, and measuring the wrong weight is a silent under-reservation. */
+const VERDICT_STYLE = { size: 8, style: "bold", gap: 4 };
+const THIN_STYLE = { size: 7, style: "bold", gap: 3 };
+
+/** The thin-remaining-baseline warning, so flexBudget measures the real
+ *  string rather than a stand-in that has to be kept the same length. */
+function thinBaselineNote(years) {
+  return `Note: only ${years} baseline years had complete data for the rest of this season, so the hot and cool finishes come from a thin sample. Treat the range as indicative.`;
+}
 
 function hexToRgb(hex) {
   const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || ""));
@@ -228,6 +255,72 @@ export function buildPdf({ jsPDF, season, hybrid, location, brand, logoDataUrl, 
     setText(INK);
   }
 
+  /** Height in points a paragraph() call with these options would take. */
+  function measureParagraph(text, { size = 8, style = "normal", gap = 8 } = {}) {
+    if (!text) return 0;
+    doc.setFont("helvetica", style);
+    doc.setFontSize(size);
+    return doc.splitTextToSize(text, CONTENT_W).length * (size + 2) + gap;
+  }
+
+  /**
+   * How much extra prose this particular run carries beyond the baseline
+   * report, in points.
+   *
+   * The file header has always said the charts are the flexible part and
+   * that "if something has to give, they shrink before the caveats get
+   * cut" — but the heights were two hard-coded constants, so in practice
+   * the caveats pushed the report onto a third sheet instead. Measuring
+   * them here and taking it out of the stage chart is what makes the
+   * stated design actually true.
+   *
+   * FIVE blocks are conditional, and none of them appears in the e2e
+   * fixture:
+   *
+   *   1. the extrapolation caveat
+   *   2. the frost coverage note
+   *   3. the thin-baseline note
+   *   4. the frost verdict — NOT fixed height; one line for a good or
+   *      warn tone with a real median, two for every "too long to
+   *      finish" wording and every censored-median wording
+   *   5. the record-quality note (a gap in the record, a thin baseline)
+   *
+   * Keep this list in step with the terms below; it is the one the file
+   * header defers to.
+   */
+  function flexBudget() {
+    let extra = 0;
+    const caveat = hybrid && hybrid.anyEstimated ? extrapolationCaveat(hybrid) : null;
+    if (caveat) extra += measureParagraph(caveat, { size: 7.2, gap: 0 });
+    // The real strings, not stand-ins. A proxy of the wrong length is a
+    // second place the wording has to be kept in step, which is the
+    // problem this release spent three rounds on.
+    const kf = season.killingFreeze;
+    if (kf && kf.p10MonthDay) extra += measureParagraph(freezeCoverageNote(kf), { size: 7.2, gap: 0 });
+    // `.length`, NOT an index. remainingYearsUsed is a list of YEAR
+    // NUMBERS — [1996…2025] — and this originally indexed it by a day
+    // offset, which is past the end of a 30-element array for every real
+    // season, so the term silently measured nothing. The block it is
+    // measuring reads `.length` (see drawScenarioTable below), and so
+    // does the on-screen warning in results.js; this is the odd one out.
+    const thin = (season.remainingYearsUsed || []).length;
+    if (season.currentStage && thin > 0 && thin < MIN_TRUSTWORTHY_YEARS) extra += measureParagraph(thinBaselineNote(thin), THIN_STYLE);
+    // The frost verdict is NOT fixed height, which the first version of
+    // this assumed. It wraps to one line for a good or warn tone with a
+    // real median, and to two for every "bad" wording and for every
+    // null-median wording — which is the mild-grid-point case this whole
+    // release exists to handle. An RM-estimated report had well under a
+    // point of slack, so that one extra line spilled onto a third sheet.
+    // One line is baseline; anything past it is flex.
+    const v = frostVerdict(season, hybrid);
+    if (v) extra += Math.max(0, measureParagraph(v.text, VERDICT_STYLE) - (VERDICT_STYLE.size + 2) - VERDICT_STYLE.gap);
+    // The record-quality note is a whole extra method bullet when it
+    // fires, and it fires on exactly the runs that already carry the most
+    // conditional text.
+    extra += measureParagraph(recordQualityNote(season, BASELINE_YEARS), { size: 7.2, gap: 3 });
+    return extra;
+  }
+
   // ---- title block -----------------------------------------------
   decoratePage();
 
@@ -295,10 +388,23 @@ export function buildPdf({ jsPDF, season, hybrid, location, brand, logoDataUrl, 
     const vs = season.gduVsNormal;
     statRow([
       [Math.round(season.gduToDate).toLocaleString(), "GDU accumulated"],
-      [vs === null ? "—" : `${vs >= 0 ? "+" : "−"}${Math.abs(Math.round(vs)).toLocaleString()}`, vs >= 0 ? "GDU ahead of normal" : "GDU behind normal"],
+      // `null >= 0` is true, so an unknown gap used to print "—" under
+      // the label "GDU ahead of normal". The screen has always guarded
+      // this; the PDF did not.
+      [vs === null ? "—" : `${vs >= 0 ? "+" : "−"}${Math.abs(Math.round(vs)).toLocaleString()}`, vs === null ? "vs normal" : vs >= 0 ? "GDU ahead of normal" : "GDU behind normal"],
       [String(season.observedEndOffset + 1), "days since planting"],
     ]);
-    paragraph(`Observed through ${formatShort(season.lastObservedIso, { withYear: true })}, then the 16-day forecast, then projected.`, { gap: 4 });
+    // Conditional for the same reason solidCaption is: a failed forecast
+    // fetch, a gap-truncated record and a fully historical season all
+    // reach this line, and none of them has a 16-day forecast in it.
+    paragraph(
+      season.knownEndOffset > season.observedEndOffset
+        ? `Observed through ${formatShort(season.lastObservedIso, { withYear: true })}, then the 16-day forecast, then projected.`
+        : season.knownEndOffset >= season.seasonDays - 1
+          ? `Observed through ${formatShort(season.lastObservedIso, { withYear: true })} — the whole season is on the books.`
+          : `Observed through ${formatShort(season.lastObservedIso, { withYear: true })}, then projected. No forecast is included in this run.`,
+      { gap: 4 }
+    );
   }
 
   // ---- accumulation chart -----------------------------------------
@@ -612,12 +718,7 @@ export function buildPdf({ jsPDF, season, hybrid, location, brand, logoDataUrl, 
       paragraph(`Vertical rules: ${parts.join("; ")}.`, { size: 7, gap: 3 });
     }
 
-    paragraph(
-      season.knownEndOffset > season.observedEndOffset
-        ? `Solid = observed through ${formatShort(season.lastObservedIso)} plus forecast through ${formatShort(season.lastKnownIso)}. Dashed = projected.`
-        : "Dashed = projected.",
-      { size: 7, gap: 6 }
-    );
+    paragraph(solidCaption(season, formatShort), { size: 7, gap: 6 });
   }
 
   function polygon(pts, style) {
@@ -687,14 +788,11 @@ export function buildPdf({ jsPDF, season, hybrid, location, brand, logoDataUrl, 
     y += 4;
 
     const thin = (season.remainingYearsUsed || []).length;
-    if (cs && thin > 0 && thin < 20) {
-      paragraph(
-        `Note: only ${thin} baseline years had complete data for the rest of this season, so the hot and cool finishes come from a thin sample. Treat the range as indicative.`,
-        { size: 7, gap: 3, style: "bold", color: INK }
-      );
+    if (cs && thin > 0 && thin < MIN_TRUSTWORTHY_YEARS) {
+      paragraph(thinBaselineNote(thin), { ...THIN_STYLE, color: INK });
     }
     paragraph(
-      "A date marked “reached” is read off observed weather — it already happened, so a hot or cool rest-of-year cannot move it. “In forecast” lands inside the 16-day outlook. Only a “projected” date carries a hot-to-cool range, and that range is the answer, not the single date above it. The rows beneath are whole seasons for comparison.",
+      "“Reached” is read off observed weather and cannot move. “In forecast” is inside the 16-day outlook. Only a “projected” date carries a hot-to-cool range, and that range is the answer, not the single date above it. The rows beneath are whole seasons for comparison.",
       { size: 7, gap: 4 }
     );
 
@@ -726,7 +824,12 @@ export function buildPdf({ jsPDF, season, hybrid, location, brand, logoDataUrl, 
   }
 
   function drawStageChart() {
-    const h = 380;
+    // 380 is the comfortable height. It gives back whatever this run's
+    // conditional caveats need, down to a floor of 290 — below that the
+    // stage labels start colliding, and at that point the report really
+    // has grown past what one sheet can carry and should fail the
+    // two-page test rather than render illegibly.
+    const h = Math.max(290, 380 - flexBudget());
     ensureSpace(h + 12);
     const plot = { x: MARGIN + 34, y, w: CONTENT_W - 40, h };
     const maxGdu = stages[stages.length - 1].gdu;
@@ -811,18 +914,41 @@ export function buildPdf({ jsPDF, season, hybrid, location, brand, logoDataUrl, 
 
   function drawFrost() {
     const kf = season.killingFreeze;
-    if (!kf || !kf.medianMonthDay) {
-      paragraph("No 28 °F freeze appears in this location's 30-year record after August 1, so a killing freeze isn't the limiting factor here.", { color: INK });
+    // Gate on the p10, NOT the median — the same test the on-screen card
+    // uses. A null median no longer means "never freezes here": with
+    // right-censored order statistics it also occurs at a mild grid point
+    // where a minority of years froze, and up to 14 of 30 years CAN reach
+    // 28 °F while the median is still null. Gating the whole section on
+    // the median printed "No 28 °F freeze appears in this location's
+    // 30-year record" onto the sheet a rep hands a grower, while the app
+    // on the same run showed a 1-in-10 freeze date and, for a long
+    // hybrid, a red "caught short of black layer" verdict.
+    if (!kf || !kf.p10MonthDay) {
+      paragraph(noFreezeText(kf), { color: INK });
       return;
     }
     const yr = season.plantingYear;
     statRow([
       [formatShort(`${yr}-${kf.p10MonthDay}`), "28 °F by this date 1 yr in 10"],
-      [formatShort(`${yr}-${kf.medianMonthDay}`), "median 28 °F freeze"],
+      [kf.medianMonthDay ? formatShort(`${yr}-${kf.medianMonthDay}`) : "no freeze", "median 28 °F freeze"],
       [season.lightFrost && season.lightFrost.medianMonthDay ? formatShort(`${yr}-${season.lightFrost.medianMonthDay}`) : "—", "median 32 °F frost"],
     ]);
+    // The verdict — the one sentence that answers "will this finish
+    // here". Shared with the screen via core/frostVerdict.js; the PDF
+    // previously printed the three dates and left the reader to do this
+    // arithmetic themselves.
+    const v = frostVerdict(season, hybrid);
+    if (v) paragraph(v.text, { ...VERDICT_STYLE, color: INK });
+
+    // Folded into the accuracy paragraph rather than added as its own
+    // block. This report has a hard two-page budget and an RM-estimated
+    // hybrid leaves under 20 pt of slack on page two — a separate
+    // paragraph here pushed it onto a third sheet carrying nothing but a
+    // footer.
+    const coverage = freezeCoverageNote(kf);
     paragraph(
-      "Read these as the LATE end of the range. Against real thermometer records near Missouri Valley, Iowa for 1996–2025, this gridded dataset put the median first 32 °F at Oct 26 where nearby stations measured Oct 19 and Oct 7 — frost hinges on one night's minimum, which a 6-to-15 mile grid cell averages away. GDU accumulation itself checked out within about 1% of the nearest station.",
+      (coverage ? coverage + " " : "") +
+        "Read these as the LATE end of the range: a 6-to-15 mile grid cell averages away the radiative cooling that makes a low spot frost first, so against nearby station records these dates run 1 to 3 weeks late. GDU accumulation itself is within about 1% of station records.",
       { size: 7.2, gap: 5 }
     );
   }
@@ -831,8 +957,8 @@ export function buildPdf({ jsPDF, season, hybrid, location, brand, logoDataUrl, 
     const yrs = season.yearsUsed || [];
     const lines = [
       "GDU = (min(daily high, 86 °F) + max(daily low, 50 °F)) ÷ 2 − 50 — the modified base-50/86 method US seed companies rate hybrids on. A day below 50 °F counts 0, never a negative; heat above 86 °F adds nothing. Accumulation starts on the planting date itself.",
-      `Normal, hot and cool are the 50th, 90th and 10th percentiles of accumulation across ${yrs.length} complete years (${yrs[0]}–${yrs[yrs.length - 1]}) at this exact grid point — an envelope, not a replay of any one year. Growth stages between Planting, Silks and Maturity are scaled from Iowa State's published ladder for a 2,700-GDU hybrid and are estimates.`,
-      `Temperatures: ERA5 reanalysis via Open-Meteo through ${formatShort(season.lastObservedIso, { withYear: true })}, plus its 16-day forecast. Grid point ${location.lat.toFixed(4)}, ${location.lon.toFixed(4)}.`,
+      `Normal, hot and cool are the 50th, 90th and 10th percentiles of accumulation across ${yrs.length} complete years (${yrs.length ? `${yrs[0]}–${yrs[yrs.length - 1]}` : "—"}) at this exact grid point — an envelope, not a replay of any one year. Growth stages between Planting, Silks and Maturity are scaled from Iowa State's published ladder for a 2,700-GDU hybrid and are estimates.`,
+      `${temperatureProvenance(season, formatShort)} Grid point ${location.lat.toFixed(4)}, ${location.lon.toFixed(4)}.`,
     ];
     if (!hybrid) {
       lines.push("No hybrid was entered, so no stage dates appear here — these curves are the heat itself. Add a hybrid in the app for silk and black layer predictions.");
@@ -843,10 +969,18 @@ export function buildPdf({ jsPDF, season, hybrid, location, brand, logoDataUrl, 
         const src = sourceLabel(rv, hybrid.rm);
         if (src) parts.push(`${name} ${rv.value.toLocaleString()} GDU was ${src}`);
       }
+      // Appended to the same line rather than pushed as its own bullet,
+      // for the two-page budget — see the note in drawFrost.
+      const extrapolation = extrapolationCaveat(hybrid);
       lines.push(
-        `${parts.join("; ")}. Estimates come from a least-squares fit on all ${FITTED_N} hybrids in the built-in list, with error measured by holding each hybrid out. Relative maturity is the weakest basis — the worst sits 389 GDU off its maturity's trend, about two and a half weeks of grain fill.`
+        `${parts.join("; ")}. Estimates come from a least-squares fit on all ${FITTED_N} hybrids in the built-in list, with error measured by holding each hybrid out. Relative maturity is the weakest basis — the worst sits 389 GDU off its maturity's trend, about two and a half weeks of grain fill.${extrapolation ? " " + extrapolation : ""}`
       );
     }
+    // The screen has always warned about a gap-truncated record and a thin
+    // baseline; the printed sheet said nothing, so the copy a grower keeps
+    // was the one with no caveat on it.
+    const quality = recordQualityNote(season, BASELINE_YEARS);
+    if (quality) lines.push(quality);
     lines.push("GDU is a heat model, not a crop model. It knows nothing about drought, saturated soils, replant, hail, disease or nitrogen — any of which can move real silk and black layer dates well off these numbers.");
     return lines;
   }

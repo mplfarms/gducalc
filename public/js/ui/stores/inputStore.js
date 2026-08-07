@@ -216,6 +216,29 @@ export function clearHybrid() {
 }
 
 /**
+ * Clears the form for a genuinely new location — name, field, planting
+ * date and hybrid.
+ *
+ * Distinct from clearHybrid(), which deliberately keeps the field and
+ * the date because "calculate the heat here without a hybrid" is a real
+ * thing to want. This is the other case: the Home screen's "Add
+ * Location" means a NEW one, and landing on the form still holding the
+ * last field's name is how somebody types over a saved entry and then
+ * saves it under the old name — saveCurrentLocation() matches on the
+ * name, so that overwrites rather than adds.
+ *
+ * The saved list itself is untouched.
+ */
+export function startNewLocation() {
+  state = { ...state, location: null, locationName: "", plantingIso: null, hybrid: {} };
+  writeJson(LOCATION_KEY, null);
+  writeJson(LOCATION_NAME_KEY, "");
+  writeJson(PLANTING_KEY, null);
+  writeJson(CURRENT_KEY, state.hybrid);
+  pubsub.notify();
+}
+
+/**
  * How the hybrid is titled on every screen, the PDF and the filename.
  *
  * A HOUSE hybrid is titled with the active Brand View's own 2-letter
@@ -276,6 +299,7 @@ export function validatedHybrid() {
       blackLayer: resolved.blackLayer,
       anyEstimated: resolved.anyEstimated,
       rmOutsideFit: resolved.rmOutsideFit,
+      basisOutsideFit: resolved.basisOutsideFit,
     },
   };
 }

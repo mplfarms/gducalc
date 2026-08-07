@@ -204,11 +204,80 @@ async function main() {
   if (SHOTS) await page.screenshot({ path: path.join(SHOT_DIR, "01-brand-select.png"), fullPage: true });
 
   await page.locator(".brand-select-btn").nth(1).click(); // NC+
-  await page.waitForSelector(".screen-body");
-  check("picking a brand routes to the calculator", () => assert.ok(page.url().includes("#/calculator")));
+  await page.waitForSelector(".home-hero");
+  check("picking a brand routes to the brand landing screen", () => assert.ok(page.url().includes("#/home")));
 
   const chrome = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--chrome").trim());
   check("NC+ Brand View applies its own chrome color", () => assert.equal(chrome.toLowerCase(), "#215aa8"));
+
+  // ---- brand landing screen ------------------------------------------
+  const home = await page.evaluate(() => ({
+    title: document.querySelector(".home-title")?.textContent.trim(),
+    logo: document.querySelector(".home-logo")?.getAttribute("src"),
+    buttons: [...document.querySelectorAll(".home-btn")].map((b) => b.firstChild?.textContent?.trim() || b.textContent.trim()),
+    primary: document.querySelector(".home-btn-primary")?.firstChild?.textContent?.trim(),
+    // A Home button on the Home screen would just reload it.
+    homeBtn: document.querySelectorAll(".top-bar-btn-home").length,
+    settingsBtn: document.querySelectorAll(".top-bar-btn-settings").length,
+    heroBg: getComputedStyle(document.querySelector(".home-hero")).backgroundColor,
+  }));
+  check("the landing screen is titled GDU Calculator", () => assert.equal(home.title, "GDU Calculator"));
+  check("it shows the selected brand's logo", () => assert.equal(home.logo, "/logos/ncplus.png"));
+  check("it offers exactly two choices", () => assert.deepEqual(home.buttons, ["Saved Locations", "Add Location"]));
+  check("Saved Locations is the primary of the two", () => assert.equal(home.primary, "Saved Locations"));
+  check("there is no Home button on the Home screen", () => assert.equal(home.homeBtn, 0));
+  check("Settings is still reachable from it", () => assert.equal(home.settingsBtn, 1));
+  // rgb(33, 90, 168) is #215AA8, NC+'s chrome — the hero has to follow
+  // the Brand View, not a fixed color.
+  check("the hero takes the Brand View's own color", () => assert.equal(home.heroBg, "rgb(33, 90, 168)"));
+  if (SHOTS) await page.screenshot({ path: path.join(SHOT_DIR, "01b-home.png"), fullPage: true });
+
+  // With nothing saved yet, the count badge has nothing to report.
+  const badgeWhenEmpty = await page.locator(".home-btn-badge").count();
+  check("the saved count is omitted while the list is empty", () => assert.equal(badgeWhenEmpty, 0));
+
+  // Saved Locations opens its own screen, and says so when empty.
+  await page.locator(".home-btn-primary").click();
+  await page.waitForSelector(".gdu-saved-list");
+  check("Saved Locations opens a screen of its own", () => assert.ok(page.url().includes("#/saved-locations")));
+  const emptyText = await page.locator(".gdu-saved-list .empty-state").textContent();
+  check("an empty saved list says how to fill it", () => assert.match(emptyText, /No saved locations yet/));
+  // One nav button, not two. A Back whose only destination was also Home
+  // put two controls labelled "Home" on the same bar.
+  const savedNav = await page.evaluate(() => [...document.querySelectorAll(".top-bar-btn")].map((b) => b.getAttribute("aria-label")));
+  check("the saved-locations bar has one Home and no duplicate", () => assert.deepEqual(savedNav, ["Home", "Settings"]));
+  await page.locator(".top-bar-btn-home").click();
+  await page.waitForSelector(".home-hero");
+  check("Home from Saved Locations returns to the landing screen", () => assert.ok(page.url().includes("#/home")));
+
+  // ---- a RETURN visit lands on Home, not the form ---------------------
+  // main.js used to seed "#/calculator" before the router ran, which
+  // silently beat router.js's own DEFAULT_PATH. The manifest's start_url
+  // is "/" with no hash, so every PWA launch and every plain reload came
+  // through that line: a returning user got the input form pre-filled
+  // with the last field they looked at — exactly what the landing screen
+  // was added to replace — and the suite never saw it, because the only
+  // bare-URL visit it made was a cold first run with no brand stored.
+  // Deliberately NOT waitForSelector(".home-hero") — when this breaks,
+  // the app renders a different screen rather than none, and a 30-second
+  // timeout on a missing element is a worse failure message than a
+  // one-line assertion naming the screen it landed on instead.
+  const landedOn = async () => {
+    await page.waitForTimeout(400);
+    return page.evaluate(() => ({ hash: window.location.hash, screen: document.querySelector(".home-hero") ? "home" : document.querySelector(".screen-body") ? "form" : "?" }));
+  };
+  await page.goto(base + "/", { waitUntil: "networkidle" });
+  const bare = await landedOn();
+  check("a return visit to the bare URL lands on the landing screen", () => assert.deepEqual(bare, { hash: "#/home", screen: "home" }));
+  await page.reload({ waitUntil: "networkidle" });
+  const reloaded = await landedOn();
+  check("and so does a plain reload", () => assert.deepEqual(reloaded, { hash: "#/home", screen: "home" }));
+  await page.waitForSelector(".home-hero");
+
+  // Add Location is the way to the input form.
+  await page.locator(".home-btn-secondary").click();
+  await page.waitForSelector(".screen-body");
+  check("Add Location opens the input form", () => assert.ok(page.url().includes("#/calculator")));
 
   // ---- inputs ------------------------------------------------------
   const gpsButtons = await page.getByRole("button", { name: "Use My Location" }).count();
@@ -606,7 +675,12 @@ async function main() {
   await page.fill('input[aria-label="Relative maturity"]', "130");
   await page.waitForSelector(".gdu-resolved-warn");
   const warnText = await page.locator(".gdu-resolved-warn").textContent();
-  check("extrapolating past the fitted RM range is warned about", () => assert.match(warnText, /extrapolating/i));
+  check("extrapolating past the fitted RM range is warned about", () => assert.match(warnText, /extrapolat/i));
+  // The warning has to name the range and retract the accuracy figures,
+  // not just gesture at a problem — and it is the SAME string the results
+  // screen and the PDF print, so a reword here reworks all three.
+  check("the warning names the fitted range it left", () => assert.match(warnText, /77–118 day range/));
+  check("the warning retracts the accuracy figures", () => assert.match(warnText, /error figures above do not apply/));
 
   // An RM-only hybrid must actually calculate.
   await page.fill('input[aria-label="Relative maturity"]', "105");
@@ -973,7 +1047,25 @@ async function main() {
   await page.waitForTimeout(150);
   const afterSwitch = (await page.locator(".gdu-stage-band-label").allTextContents()).join("|");
   check("changing scenario changes the projected dates", () => assert.notEqual(beforeSwitch, afterSwitch));
+
+  // The share payload is built ONCE when the season loads, so it has to
+  // be re-pointed when the picker moves. Without that, switching to a
+  // cool finish and then tapping Share produced a PDF whose stage chart
+  // and "Dates shown for" caption still said "normal finish" — the
+  // printed sheet disagreeing with the screen it was printed from.
+  const sharedScenario = await page.evaluate(async () => {
+    const mod = await import("/js/ui/screens/results.js");
+    return mod.__shareScenarioLabelForTest ? mod.__shareScenarioLabelForTest() : null;
+  });
+  check("the share payload follows the scenario picker", () => assert.match(String(sharedScenario), /cool/i));
+
   await page.selectOption(".gdu-scenario-select", "current-normal");
+  await page.waitForTimeout(150);
+  const backToNormal = await page.evaluate(async () => {
+    const mod = await import("/js/ui/screens/results.js");
+    return mod.__shareScenarioLabelForTest ? mod.__shareScenarioLabelForTest() : null;
+  });
+  check("and follows it back", () => assert.match(String(backToNormal), /normal/i));
 
   // ---- data table ---------------------------------------------------
   await page.waitForSelector(".gdu-data-table");
@@ -1374,6 +1466,146 @@ async function main() {
   check("loading an entry that has a hybrid switches back to Enter Hybrid", () => {
     assert.deepEqual(restored.mode, ["true", "false"]);
   });
+
+  // ---- the same list, from its own screen -----------------------------
+  // The standalone Saved Locations screen renders the SHARED list
+  // component, so a row has to behave identically there: same summary
+  // line, same one-tap calculate. If these two ever diverge it means
+  // someone has reintroduced a second copy.
+  await page.evaluate(() => { window.location.hash = "#/home"; });
+  await page.waitForSelector(".home-hero");
+  const badge = await page.locator(".home-btn-badge").textContent();
+  check("the landing screen counts the saved locations", () => assert.equal(badge.trim(), "1"));
+
+  await page.locator(".home-btn-primary").click();
+  await page.waitForSelector(".gdu-saved-row");
+  const standaloneRow = await page.locator(".gdu-saved-row").first().textContent();
+  check("the standalone screen renders the same row as the form does", () => {
+    assert.match(standaloneRow, /Brown home place/);
+    assert.match(standaloneRow, /Missouri Valley/);
+    assert.match(standaloneRow, /09-90 PCE/);
+  });
+
+  await page.locator(".gdu-saved-load").first().click();
+  await page.waitForSelector(".gdu-chart-svg", { timeout: 20000 });
+  check("tapping a row on the standalone screen calculates too", () => {
+    assert.ok(page.url().includes("#/results"));
+  });
+
+  // ---- Add Location starts clean --------------------------------------
+  // It means a NEW location. Landing on the form still holding the last
+  // field's name is how somebody types over a saved entry and then saves
+  // it back under the old name — saveCurrentLocation() matches on the
+  // name, so that overwrites rather than adds.
+  await page.evaluate(() => { window.location.hash = "#/home"; });
+  await page.waitForSelector(".home-hero");
+  await page.locator(".home-btn-secondary").click();
+  await page.waitForSelector('input[aria-label="Location name"]');
+  await page.waitForTimeout(150);
+  const afterAdd = await page.evaluate(() => ({
+    name: document.querySelector('input[aria-label="Location name"]').value,
+    zip: document.querySelector('input[aria-label="ZIP code"]').value,
+    hybrid: document.querySelector('input[aria-label="Hybrid name"]').value,
+    silk: document.querySelector('input[aria-label="GDUs to silk"]').value,
+    savedRows: document.querySelectorAll(".gdu-saved-row").length,
+  }));
+  check("Add Location clears the form", () => {
+    assert.equal(afterAdd.name, "");
+    assert.equal(afterAdd.zip, "");
+    assert.equal(afterAdd.hybrid, "");
+    assert.equal(afterAdd.silk, "");
+  });
+  check("Add Location leaves the saved list alone", () => assert.equal(afterAdd.savedRows, 1));
+
+  // ---- two rows the guards used to get wrong --------------------------
+  // Both fixtures go in together and the page reloads once, so the store
+  // picks them up from localStorage rather than fighting a mid-run state.
+  // NOTE the "foreign" brand here is NC+: the active Brand View is
+  // Midwest by this point in the run (see the ramp check above).
+  await page.evaluate(() => {
+    const saved = JSON.parse(localStorage.getItem("gdu.savedLocations"));
+    saved.push({
+      id: "foreign-brand",
+      name: "Saved under NC plus",
+      location: { zip: "51555", label: "Missouri Valley, IA", lat: 41.5644, lon: -95.8913 },
+      // No planting date ON PURPOSE, so tapping it LEAVES YOU ON THE
+      // FORM looking at the select it just repainted. A complete row
+      // navigates to results and the trip back re-renders the screen,
+      // which runs the first-render migration and masks the bug this is
+      // here to catch.
+      plantingIso: null,
+      hybrid: { brand: "NC+ Hybrids", name: "09-90 PCE", gduToSilk: 1290, gduToBlackLayer: 2620, rm: 99 },
+    });
+    saved.push({
+      id: "hybrid-only",
+      name: "Legacy hybrid",
+      location: null,
+      plantingIso: null,
+      hybrid: { brand: "", name: "OLD-1", gduToSilk: 1200, gduToBlackLayer: 2500, rm: 96 },
+    });
+    localStorage.setItem("gdu.savedLocations", JSON.stringify(saved));
+  });
+  await page.goto(base + "/#/calculator", { waitUntil: "networkidle" });
+  await page.reload({ waitUntil: "networkidle" });
+  await page.waitForSelector(".gdu-saved-row");
+
+  // The dropdown only offers the ACTIVE view's house brand, so an entry
+  // carrying a different one used to blank the select entirely — not even
+  // the placeholder — while the store kept the foreign brand, and a run
+  // from that state titled the report with the wrong two-letter code.
+  await page.locator(".gdu-saved-load").filter({ hasText: "Saved under NC plus" }).click();
+  await page.waitForTimeout(500); // stays put — no date to calculate with
+  const foreign = await page.evaluate(() => ({
+    value: document.querySelector('select[aria-label="Brand"]').value,
+    index: document.querySelector('select[aria-label="Brand"]').selectedIndex,
+    stored: JSON.parse(localStorage.getItem("gdu.currentHybrid")).brand,
+  }));
+  check("a hybrid from another Brand View is migrated, not left blank", () => {
+    assert.equal(foreign.value, "Midwest Seed Genetics");
+    assert.ok(foreign.index >= 0, "the select must have a real selection");
+    assert.equal(foreign.stored, "Midwest Seed Genetics");
+  });
+
+  // Give the store a real field AND date, so the next check is testing
+  // the guard rather than an empty store.
+  await page.locator(".gdu-saved-load").filter({ hasText: "Brown home place" }).click();
+  await page.waitForSelector(".gdu-chart-svg", { timeout: 20000 });
+
+  // A hybrid-only row has no field or date of its own, and the guard
+  // used to read the STORE — so it passed on those leftovers and
+  // calculated silently against somebody else's field.
+  await page.goto(base + "/#/saved-locations", { waitUntil: "networkidle" });
+  await page.waitForSelector(".gdu-saved-row");
+  await page.locator(".gdu-saved-load").filter({ hasText: "Legacy hybrid" }).click();
+  await page.waitForTimeout(700);
+  // The LAST toast, not the first — toasts stack, and an earlier one from
+  // the foreign-brand row above was still on screen.
+  const legacyOutcome = await page.evaluate(() => {
+    const toasts = [...document.querySelectorAll(".toast")];
+    return { hash: window.location.hash, toast: toasts.length ? toasts[toasts.length - 1].textContent : null };
+  });
+  check("a hybrid-only row does not calculate against a leftover field", () => {
+    assert.ok(!legacyOutcome.hash.includes("#/results"), `went to results: ${legacyOutcome.hash}`);
+  });
+  check("and it says exactly what is missing", () => {
+    assert.match(String(legacyOutcome.toast), /Add a ZIP and a planting date/);
+  });
+
+  // Clean the fixtures back out so later checks see the original list.
+  await page.evaluate(() => {
+    const saved = JSON.parse(localStorage.getItem("gdu.savedLocations")).filter((x) => x.id !== "foreign-brand" && x.id !== "hybrid-only");
+    localStorage.setItem("gdu.savedLocations", JSON.stringify(saved));
+  });
+  await page.goto(base + "/#/calculator", { waitUntil: "networkidle" });
+  await page.reload({ waitUntil: "networkidle" });
+  await page.waitForSelector('input[aria-label="Location name"]');
+
+  // Put the saved entry back in the boxes for the checks that follow.
+  await page.locator(".gdu-saved-load").first().click();
+  await page.waitForSelector(".gdu-chart-svg", { timeout: 20000 });
+  await page.evaluate(() => { window.location.hash = "#/calculator"; });
+  await page.waitForSelector('input[aria-label="Location name"]');
+  await page.waitForTimeout(200);
 
   // An entry that cannot run must NOT navigate. The migrated
   // hybrid-only rows have no field or date of their own, and a saved

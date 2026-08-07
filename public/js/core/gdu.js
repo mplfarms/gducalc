@@ -54,10 +54,14 @@ export const GDU_MAX_PER_DAY = (GDU_CAP_F + GDU_CAP_F) / 2 - GDU_BASE_F; // 36
  *   silent 0 quietly depress a season total.
  */
 export function dailyGdu(tmaxF, tminF) {
-  if (tmaxF === null || tmaxF === undefined || tminF === null || tminF === undefined) return null;
+  // Only real numbers count. The null/undefined guard alone was not
+  // enough: Number("") and Number(false) are both 0, which is finite,
+  // clamps to the 50 F base and produces a silent 10-GDU day out of a
+  // blank field — exactly the "quietly depress the season total" failure
+  // this function exists to prevent.
+  if (!isNumeric(tmaxF) || !isNumeric(tminF)) return null;
   const a = Number(tmaxF);
   const b = Number(tminF);
-  if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
   // Defensive: a reanalysis/forecast row with min > max is nonsense, but
   // it would silently produce the same answer either way once both are
   // clamped and averaged. Ordering them makes that explicit rather than
@@ -65,6 +69,14 @@ export function dailyGdu(tmaxF, tminF) {
   const hi = clamp(Math.max(a, b), GDU_BASE_F, GDU_CAP_F);
   const lo = clamp(Math.min(a, b), GDU_BASE_F, GDU_CAP_F);
   return (hi + lo) / 2 - GDU_BASE_F;
+}
+
+/** A value that is genuinely a number, not something Number() will
+ *  helpfully turn into one ("" -> 0, false -> 0, [] -> 0). */
+function isNumeric(v) {
+  if (typeof v === "number") return Number.isFinite(v);
+  if (typeof v === "string") return v.trim() !== "" && Number.isFinite(Number(v));
+  return false;
 }
 
 function clamp(v, lo, hi) {
@@ -385,32 +397,140 @@ export function bandTempStats(index, startIso, firstOffset, lastOffset, addDaysF
  * @returns {{medianMonthDay: string|null, p10MonthDay: string|null, earliestMonthDay: string|null, yearsUsed: number}}
  */
 export function firstFreezeStats(index, years, thresholdF, dateFns, fromMonthDay = "08-01", searchDays = 140) {
+  // RIGHT-CENSORED, not filtered. A year that never reaches the
+  // threshold inside the window is recorded at a sentinel BEYOND the
+  // window rather than dropped, because dropping it is what makes the
+  // answer wrong: taking percentiles over only the years that froze
+  // deletes the entire late tail and pulls every quantile earlier. At a
+  // mild grid point where only 12 of 30 years reach 28 F, filtering
+  // reported a median freeze of Nov 5 when the true median across 30
+  // years is NO killing freeze at all — Nov 5 is really the ~28th
+  // percentile. That number drives the frost verdict and the "after
+  // median freeze" badge, so it was manufacturing false alarms.
+  //
+  // With the sentinel the order statistics are correct, and a percentile
+  // that lands on or past the sentinel is reported as null, which the
+  // caller renders as "no freeze this late in the record" rather than a
+  // date.
+  const NEVER = searchDays;
   const offsets = [];
+  let yearsFroze = 0;
+  let yearsSkipped = 0;
+
   for (const y of years) {
     const startIso = dateFns.isoForYear(fromMonthDay, y);
     if (!startIso) continue;
+    let found = null;
+    let gap = false;
     for (let i = 0; i < searchDays; i++) {
       const rec = index[dateFns.addDays(startIso, i)];
-      if (!rec || rec.tmin === null || !Number.isFinite(rec.tmin)) continue;
+      if (!rec || rec.tmin === null || !Number.isFinite(rec.tmin)) {
+        // A hole in the record is not "no freeze that day" — the freeze
+        // may have been IN the hole. Walking past it reported one test
+        // year's freeze 35 days late. The year is unusable; drop it,
+        // which is the same policy envelopeFromCalendarDate applies.
+        gap = true;
+        break;
+      }
       if (rec.tmin <= thresholdF) {
-        offsets.push(i);
+        found = i;
         break;
       }
     }
+    if (gap) {
+      yearsSkipped++;
+      continue;
+    }
+    if (found === null) {
+      offsets.push(NEVER); // censored: got through the window unfrozen
+    } else {
+      offsets.push(found);
+      yearsFroze++;
+    }
   }
+
   if (offsets.length === 0) {
-    return { medianMonthDay: null, p10MonthDay: null, earliestMonthDay: null, yearsUsed: 0 };
+    return { medianMonthDay: null, p10MonthDay: null, earliestMonthDay: null, yearsUsed: 0, yearsFroze: 0, yearsSkipped };
   }
+
   // Any non-leap reference year works for turning an Aug-1 offset back
   // into a month/day; 2001 covers Aug-Dec with no leap-day ambiguity.
   const refStart = dateFns.isoForYear(fromMonthDay, 2001);
-  // Round rather than interpolate — half a day is not a meaningful frost
-  // date, and a whole-number offset maps cleanly to a calendar day.
-  const toMonthDay = (offset) => dateFns.addDays(refStart, Math.round(offset)).slice(5, 10);
+  // Every offset that gets here is a whole day already — censoredQuantile
+  // returns an order statistic, not a blend of two.
+  const toMonthDay = (offset) => (offset === null ? null : dateFns.addDays(refStart, offset).slice(5, 10));
+  // The earliest is an observation, not a percentile, so it only needs
+  // the "was there one at all" check.
+  const earliest = Math.min(...offsets);
   return {
-    medianMonthDay: toMonthDay(percentile(offsets, 0.5)),
-    p10MonthDay: toMonthDay(percentile(offsets, 0.1)),
-    earliestMonthDay: toMonthDay(Math.min(...offsets)),
+    medianMonthDay: toMonthDay(censoredQuantile(offsets, 0.5, NEVER)),
+    p10MonthDay: toMonthDay(censoredQuantile(offsets, 0.1, NEVER)),
+    earliestMonthDay: earliest >= NEVER ? null : toMonthDay(earliest),
+    /** Years that contributed at all — frozen or censored. */
     yearsUsed: offsets.length,
+    /** Of those, how many actually reached the threshold. */
+    yearsFroze,
+    /** Years thrown out because the record had a hole before any freeze. */
+    yearsSkipped,
   };
+}
+
+/**
+ * A quantile over right-censored data, where every censored value has
+ * been recorded as the sentinel `never` (a lower bound: "at least this
+ * many days, we stopped looking").
+ *
+ * ---------------------------------------------------------------
+ * Why this is not percentile()
+ * ---------------------------------------------------------------
+ * percentile() is the interpolating (Excel PERCENTILE.INC) convention.
+ * It is right for the GDU envelopes, which are continuous quantities.
+ * It is wrong here, twice over:
+ *
+ *   1. It interpolates INTO the sentinel. Averaging a real freeze offset
+ *      with 140 produces a finite, plausible-looking number below the
+ *      sentinel that then renders as a calendar date. Measured on a
+ *      30-year fixture whose latest real freeze was Nov 14: 15 years
+ *      freezing produced a "median" of Dec 2, and 3 years freezing
+ *      produced a "1 year in 10" date of Dec 16 — both later than any
+ *      freeze that ever happened there.
+ *   2. Even setting censoring aside, a frost date is a whole day.
+ *      toMonthDay rounds the interpolated value straight back to one, so
+ *      the interpolation buys nothing and only blurs which years the
+ *      answer came from.
+ *
+ * ---------------------------------------------------------------
+ * What this does instead
+ * ---------------------------------------------------------------
+ * The nearest-rank quantile of the empirical distribution:
+ * Q(p) = the smallest observed offset x with F(x) >= p, i.e. the
+ * ceil(p*n)-th smallest of n years. Because every censored year is a
+ * lower bound that sorts to the end, this is also what Kaplan-Meier
+ * reduces to when all the censoring happens after all the events —
+ * which is exactly this dataset's shape.
+ *
+ * The practical difference from the interpolating rule is at the
+ * boundary, and it matters. With 3 of 30 years freezing, F reaches 0.10
+ * at the 3rd earliest freeze, so the 1-year-in-10 date IS knowable and
+ * is that date. The interpolating rule wanted the 3.9th order statistic,
+ * found the 4th censored, and refused — and the UI's refusal branch
+ * says "not enough for a 1-year-in-10 date to mean anything", which for
+ * a location where 3 in 30 years froze is precisely backwards.
+ *
+ * It also states the answer in terms a person can check: the 1-in-10
+ * date is the 3rd earliest freeze in 30 years, not a weighted blend of
+ * the 3rd and 4th.
+ *
+ * @param {number[]} values offsets, censored ones recorded as `never`
+ * @param {number} p 0..1
+ * @param {number} never the censoring sentinel
+ * @returns {number|null} null when fewer than p of the years froze, so
+ *   the quantile falls in the censored tail and is not identifiable
+ */
+function censoredQuantile(values, p, never) {
+  const sorted = (values || []).filter((v) => Number.isFinite(v)).sort((a, b) => a - b);
+  const n = sorted.length;
+  if (n === 0) return null;
+  const idx = clamp(Math.ceil(clamp(p, 0, 1) * n) - 1, 0, n - 1);
+  return sorted[idx] >= never ? null : sorted[idx];
 }

@@ -108,7 +108,14 @@ export function buildSeason({ index, plantingIso, gduToSilk, gduToBlackLayer, la
   // "known" data with a projection spliced after it. Making the caller's
   // stated horizon authoritative keeps "known" meaning exactly what the
   // chart's solid-line legend claims it means.
-  const horizonOffset = lastKnownIso ? daysBetween(plantingIso, lastKnownIso) : SEASON_DAYS - 1;
+  // Clamped to the season window, because the season IS the window. For a
+  // 2024 planting date looked up in 2026 the raw horizon is ~800 days;
+  // leaving it unclamped made "the record stopped short of the horizon"
+  // permanently true and lit a data-gap warning on every complete
+  // historical season.
+  const horizonOffset = lastKnownIso
+    ? Math.min(daysBetween(plantingIso, lastKnownIso), SEASON_DAYS - 1)
+    : SEASON_DAYS - 1;
   // Floor at -1 ("nothing known yet") rather than letting a planting
   // date far in the future produce a large negative offset.
   const knownEndOffset = Math.max(-1, Math.min(known.lastCompleteOffset, horizonOffset));
@@ -211,9 +218,12 @@ export function buildSeason({ index, plantingIso, gduToSilk, gduToBlackLayer, la
   }
   rows.push(
     makeRow("lastYear", `Last year (${plantingYear - 1}) actual`, lastYearAcc.cum, plantingIso, gduToSilk, gduToBlackLayer, SEASON_DAYS - 1, SEASON_DAYS - 1),
-    makeRow("hot", "Abnormally hot year (90th pct)", env.p90, plantingIso, gduToSilk, gduToBlackLayer, SEASON_DAYS - 1, -1),
-    makeRow("normal", `Normal (${BASELINE_YEARS}-yr median)`, env.p50, plantingIso, gduToSilk, gduToBlackLayer, SEASON_DAYS - 1, -1),
-    makeRow("cool", "Abnormally cool year (10th pct)", env.p10, plantingIso, gduToSilk, gduToBlackLayer, SEASON_DAYS - 1, -1)
+    // These three describe the LOCATION's climate, not this season, so
+    // their dates are neither observed, forecast nor projected — see the
+    // "climatology" case in basisFor's comment.
+    makeRow("hot", "Abnormally hot year (90th pct)", env.p90, plantingIso, gduToSilk, gduToBlackLayer, SEASON_DAYS - 1, -1, "climatology"),
+    makeRow("normal", `Normal (${BASELINE_YEARS}-yr median)`, env.p50, plantingIso, gduToSilk, gduToBlackLayer, SEASON_DAYS - 1, -1, "climatology"),
+    makeRow("cool", "Abnormally cool year (10th pct)", env.p10, plantingIso, gduToSilk, gduToBlackLayer, SEASON_DAYS - 1, -1, "climatology")
   );
 
   // ---- this season, collapsed to one honest answer per stage ----
@@ -244,8 +254,30 @@ export function buildSeason({ index, plantingIso, gduToSilk, gduToBlackLayer, la
     lastYearAcc,
     knownEndOffset,
     observedEndOffset,
-    lastKnownIso,
-    lastObservedIso,
+    // DERIVED, not echoed. The caller tells us how far its download ran,
+    // but a hole in the middle of the record stops `accumulate` early, and
+    // everything downstream — "GDU through <date>", "observed through
+    // <date> plus forecast through <date>", the PDF header — reads these
+    // two fields as the dates the numbers actually cover. Passing the
+    // caller's optimistic end back out would label a total that stops at
+    // May 30 with "Through Jul 1" and claim a forecast that was discarded.
+    // Deriving from the offsets that were really used makes the label and
+    // the number agree by construction.
+    lastKnownIso: knownEndOffset >= 0 ? addDays(plantingIso, knownEndOffset) : null,
+    lastObservedIso: observedEndOffset >= 0 ? addDays(plantingIso, observedEndOffset) : null,
+    // True when a gap cut the record short of the window the caller could
+    // have covered, so the UI can say "the record stops here" instead of
+    // silently showing a stale date.
+    //
+    // Gated on horizonOffset >= 0, which is what separates "a hole in the
+    // data" from "the planting date has not arrived yet" — a future
+    // planting has a negative horizon and nothing is wrong with it. And
+    // deliberately NOT gated on knownEndOffset >= 0: a hole ON the
+    // planting day itself leaves knownEndOffset at -1, which is the most
+    // truncated case there is and used to produce no warning at all.
+    truncatedByGap: horizonOffset >= 0 && knownEndOffset < horizonOffset,
+    requestedKnownIso: lastKnownIso,
+    requestedObservedIso: lastObservedIso,
     currentStage,
     yearsUsed: env.yearsUsed,
     // How many years actually fed the REMAINING-season envelope — the one
@@ -279,6 +311,16 @@ export function buildSeason({ index, plantingIso, gduToSilk, gduToBlackLayer, la
  *                 forecast too.
  *   "projected" — past the last known day. This is the only region where
  *                 a normal / hot / cool finish can possibly diverge.
+ *   "climatology" — not about this season at all. The 30-year median /
+ *                 90th / 10th percentile rows describe what a normal,
+ *                 hot or cool YEAR looks like at this location; there is
+ *                 no observation and no forecast behind them. They were
+ *                 previously labelled "forecast" because they were fed
+ *                 observedThroughOffset = -1 and a full-length known
+ *                 horizon, which made every day of them look like it sat
+ *                 inside a 16-day outlook. Nothing rendered that label
+ *                 yet, so nothing was visibly wrong — but the field was
+ *                 there to be believed by the next thing that read it.
  *
  * @param {number|null} offset
  * @param {number} observedThroughOffset
@@ -292,7 +334,8 @@ function basisFor(offset, observedThroughOffset, knownThroughOffset) {
   return "projected";
 }
 
-function makeRow(key, label, cum, plantingIso, gduToSilk, gduToBlackLayer, solidThroughOffset, observedThroughOffset) {
+function makeRow(key, label, cum, plantingIso, gduToSilk, gduToBlackLayer, solidThroughOffset, observedThroughOffset, basisOverride = null) {
+  const basisOf = (offset) => (offset === null ? null : basisOverride || basisFor(offset, observedThroughOffset, solidThroughOffset));
   const silkOffset = offsetAtTarget(cum, gduToSilk);
   const blOffset = offsetAtTarget(cum, gduToBlackLayer);
   const finalIdx = lastNonNull(cum);
@@ -302,11 +345,11 @@ function makeRow(key, label, cum, plantingIso, gduToSilk, gduToBlackLayer, solid
     silkOffset,
     silkIso: silkOffset === null ? null : addDays(plantingIso, silkOffset),
     silkIsProjected: silkOffset !== null && silkOffset > solidThroughOffset,
-    silkBasis: basisFor(silkOffset, observedThroughOffset, solidThroughOffset),
+    silkBasis: basisOf(silkOffset),
     blackLayerOffset: blOffset,
     blackLayerIso: blOffset === null ? null : addDays(plantingIso, blOffset),
     blackLayerIsProjected: blOffset !== null && blOffset > solidThroughOffset,
-    blackLayerBasis: basisFor(blOffset, observedThroughOffset, solidThroughOffset),
+    blackLayerBasis: basisOf(blOffset),
     seasonTotal: finalIdx === -1 ? null : cum[finalIdx],
   };
 }

@@ -1,4 +1,4 @@
-# GDU Calculator v3.4 (Beta)
+# GDU Calculator v3.6 (Beta)
 
 A hybrid GDU calculator for corn: set a field location, a planting date, and a
 hybrid (133 built in, or type your own numbers — any one of GDUs to silk, GDUs to
@@ -22,6 +22,82 @@ one choice with two answers", which is the truth.
 The separate show/hide chevron that used to sit in the header bar is gone: the
 mode toggle is the expander now, and two controls for one piece of state is how
 they end up disagreeing.
+
+## The brand landing screen
+
+Choosing a Brand View lands on a **Home screen** rather than dropping straight
+onto the input form: brand logo on the brand's own chrome color, and the two
+things a rep opens the app to do.
+
+* **Saved Locations** (filled white, with a count badge) — the whole saved list
+  on a screen of its own.
+* **Add Location** (outlined) — the input form, cleared.
+
+That hierarchy is the point. The form is the right screen for "new field" and
+the wrong one for the more common trip — "check the field I set up last week" —
+where the saved list was three-quarters of the way down it. Two
+equally-weighted buttons would just be a menu; one filled and one outlined says
+which one you probably want.
+
+There is deliberately **no Home button on the Home screen**. A button that
+reloads the screen you are already looking at reads as broken. Settings stays.
+
+`Add Location` clears the form (`inputStore.startNewLocation()`) rather than
+leaving the last field's name, ZIP, date and hybrid in the boxes. It is distinct
+from `clearHybrid()`, which keeps the field and the date on purpose — "calculate
+the heat here without a hybrid" is a real thing to want. This one is the other
+case, and it matters because `saveCurrentLocation()` matches on the name: land
+on a pre-filled form, change a couple of numbers, hit Save, and you have
+overwritten a saved location instead of adding one.
+
+The layout is the shared stylesheet's existing `.home-hero` / `.home-logo` /
+`.home-btn` rules — the same ones behind Corn Plot Harvest's plot chooser, not a
+copy of them — so the two apps read as one product. Crow's gets a white circle
+behind its rooster mark where the other two get a rounded rectangle, which is
+also already in that stylesheet.
+
+**The saved list is one component, rendered twice.** It appears on its own
+screen and inside the input form's Saved Locations card, and
+`components/savedLocationList.js` holds the rows, the summary line, the delete
+confirmation and — the part that actually matters — the guards deciding whether
+a row has enough saved to calculate. Two copies of a list is cosmetic; two
+copies of those guards is how one screen quietly starts behaving differently
+from the other, which is the failure this codebase spent v3.5 digging out of.
+The one legitimate difference is what happens after an entry loads: the form
+repaints its own boxes, the standalone screen has none. That is the single
+`onAfterLoad` hook.
+
+An entry that can't calculate (a migrated hybrid-only row) behaves differently
+by placement, on purpose: from the form it says what's missing and stays put,
+because the boxes to fix it are right there. From the standalone list it says
+the same thing and goes to the form, because otherwise the message has nowhere
+to act. "Can't calculate" is judged on what **that entry** saved, not on what
+happens to be in the store — `loadSavedLocation()` deliberately leaves the field
+and date alone for a hybrid-only row, so the old store-based check passed on
+leftovers from whichever row was tapped before it and quietly calculated against
+somebody else's field. On the form the stale ZIP was at least visible in the box
+above the list; on a screen that is only a list, nothing gave it away.
+
+Three things this feature got wrong first, all found by review rather than by
+the suite, and all now pinned by an e2e check that fails when reverted:
+
+* **`main.js` seeded `#/calculator` before the router ran**, silently beating
+  `router.js`'s own `DEFAULT_PATH`. The manifest's `start_url` is `/` with no
+  hash, so every PWA launch and every plain reload came through that line — a
+  returning user got the input form pre-filled with the last field they looked
+  at, which is exactly what this screen was added to replace. Only a *first ever*
+  run reached Home, which is why the suite's single bare-URL visit didn't see it.
+  One place decides where the app opens now, and it is the router.
+* **Two buttons labelled "Home" on one bar.** The saved-locations and calculator
+  screens passed a Back button whose only destination was also Home, on top of
+  the corn-ear Home button the bar already draws. A screen reader read "Home
+  button, Home button, Settings button".
+* **A hybrid saved under another Brand View blanked the Brand select.** The
+  dropdown only offers the active view's house brand, and loading an entry
+  assigned the foreign value straight to `.value` — rendering an empty select,
+  not even the placeholder, while the store kept the foreign brand. The
+  first-render migration that exists to prevent exactly this wasn't being run on
+  load; it is one function both paths call now.
 
 ## The app icon
 
@@ -70,7 +146,7 @@ navigating to a screen that can only report the same thing less clearly.
 
 Entries from the old saved-hybrids list are **migrated, not dropped** — each
 becomes an entry carrying only its hybrid, which loads exactly as it used to and
-labels itself "hybrid only — no location saved". Silently deleting somebody's
+labels itself "hybrid only — no field or date saved". Silently deleting somebody's
 saved list to change a data shape was not a trade to make on their behalf.
 
 **The built-in list is an inline combobox on the Hybrid field**, not a modal.
@@ -218,14 +294,25 @@ browsers refuse to load cross-origin from the filesystem.
 
 ```
 npm install               # playwright, for the browser test only
-npm test                  # unit + end-to-end
+npm test                  # unit + PDF layout + end-to-end
 npm run shots             # e2e plus screenshots into test/shots/
 ```
 
-* `test/unit_gdu.mjs` — 92 checks on the GDU math, the shipped hybrid catalog, the
-  stage ladder and the rating estimator, all hand-worked from the formulas rather
-  than snapshotted from a previous run.
-* `test/e2e_smoke.mjs` — 145 checks driving the real UI in headless Chromium with
+* `test/unit_gdu.mjs` — 125 checks on the GDU math, the shipped hybrid catalog,
+  the stage ladder, the rating estimator, the frost verdict, the shared frost and
+  provenance wording, the shared summary text and the service worker's precache
+  list, all hand-worked from the formulas rather than snapshotted from a previous
+  run.
+* `test/pdf_pages.mjs` — 45 checks that the report still fits on two sheets, with
+  each conditional block (extrapolation caveat, frost coverage note,
+  thin-baseline note, and each of the frost verdict's one- and two-line wordings)
+  forced on alone and in combination — and, for each case, that the block it is
+  named after **actually rendered**. Separate
+  from the e2e suite because the e2e fixture's weather freezes in all 30 years
+  and its hybrids are all inside the fitted range, so it can never reach those
+  branches — which is exactly how the v3.5 audit's added text pushed an
+  RM-estimated report onto a third sheet with the suite still green.
+* `test/e2e_smoke.mjs` — 172 checks driving the real UI in headless Chromium with
   every weather/geocode call intercepted and served deterministic synthetic data.
 
 ## How it works
@@ -297,9 +384,18 @@ over.
 
 **Frost.** For each of the 30 years the app finds the first day at or below 28 °F
 (and 32 °F) after Aug 1. It reports the median, the 10th percentile ("1 year in
-10 froze by this date"), and the earliest on record. The verdict is scored against
-the **10th percentile**, not the median — a hybrid that black-layers exactly on
-the median freeze date gets caught one year in two, which is not a pass.
+10 froze by this date"). The verdict is scored against the **10th percentile**,
+not the median — a hybrid that black-layers exactly on the median freeze date
+gets caught one year in two, which is not a pass.
+
+Both are **nearest-rank quantiles over right-censored data**: a year that never
+froze inside the window is a lower bound, not a date, so it sorts to the end and
+counts toward the denominator without contributing a value. A quantile that lands
+in that censored tail returns nothing rather than a guess — so a median freeze
+date needs at least half the years to have frozen, and a 1-in-10 date needs at
+least three years in thirty. Every date the app reports is a day some year
+actually froze on. (`earliestMonthDay` is computed and tested but not currently
+shown on any screen.)
 
 ## The stage ramp
 
@@ -465,9 +561,10 @@ list to 133.
 refresh, about 26 GDU at the long end of the range. Shipping old coefficients
 against a new list would be quietly wrong. `FITTED_N` in
 `core/hybridEstimate.js` is the single source for the "fitted on N hybrids"
-claim printed on four screens and in the PDF — it was quoted as a literal in
-five places and three of them were still saying 72 two refreshes later. A unit
-test pins `FITTED_N` to the catalog's real length.
+claim, which appears six times across three screens, the estimator's own error
+message and the PDF — it was quoted as a literal in five places and three of them
+were still saying 72 two refreshes later. A unit test pins `FITTED_N` to the
+catalog's real length.
 
 The picker searches by variety or maturity and is sorted shortest maturity
 first, with RM on each row's meta line rather than in section headings — most
@@ -479,12 +576,18 @@ re-tags them "Edited", shows what the list said, and offers a one-tap reset — 
 edited number never keeps wearing the list's authority.
 
 One rating is still unusual for its maturity, and it survived the refresh:
-**89-58 SSPRORIB** (RM 89) is rated 1,329 silk / 2,592 black layer, 352 GDU above
-the median of its RM neighbours and in line with a 103–105 day hybrid. Per
-explicit instruction it is loaded as-is; the app flags it on selection so whoever
-picks it looks twice. The check is generic (`rmOutlierNote` in
-`core/hybridCatalog.js`) and fires for anything more than 250 GDU off the median
-of hybrids within ±2 RM days — re-run against the new list, it is the only hit.
+**89-58 SSPRORIB** (RM 89) is rated 1,329 silk / 2,592 black layer, **410 GDU
+above the 2,182 median** of its RM neighbours and in line with a 103–105 day
+hybrid. Per explicit instruction it is loaded as-is; the app flags it on
+selection so whoever picks it looks twice. The check is generic (`rmOutlierNote`
+in `core/hybridCatalog.js`) and fires for anything more than 250 GDU (black
+layer) or 150 GDU (silk) off the median of hybrids within ±2 RM days — run
+against the shipped list, it is the only hit.
+
+(The figure was 352 against a 2,240 median before v3.5 deduped rebadged
+neighbours. Three trait-suffix copies of one hybrid were being counted as three
+independent observations and pulling the comparison median toward their own
+shared value — see the audit section below.)
 
 Variety names display verbatim, with no Brand View prefix applied.
 
@@ -540,8 +643,10 @@ all 133 hybrids in the built-in list, exactly as supplied — nothing trimmed to
 flatter the fit, 89-58 included.
 
 Errors below are **leave-one-out**: each hybrid was predicted by a model fitted on
-the other 132 and never on itself. In-sample error reads about 10% lower and would
-be measuring the fit's memory rather than its accuracy.
+the other 132 and never on itself. In-sample error reads only 0.8–1.9% lower
+(RMSE 1.3–2.0%) — with 133 points and one predictor no single hybrid moves the
+fit much, so the models have little memory to flatter themselves with. The small
+gap is evidence they aren't overfitted; leave-one-out is still what's quoted.
 
 | Estimate | median err | p90 | worst | R² |
 |---|---|---|---|---|
@@ -584,7 +689,7 @@ quietly estimated from.
 The Stages and Data views use Iowa State's PMR 1009 ladder for a 2,700-GDU
 reference hybrid (also reproduced in University of Kentucky AGR-202). Six values
 are quoted directly from that published table — V2 200, V6 475, V12 870, VT 1135,
-R1 1400, R6 2700. The rest (VE, V4, V8, V10, V14 and the R2/R3/R4 kernel stages)
+R1 1400, R6 2700. The rest (VE, V4, V8, V10, V14 and the R2/R4/R5 kernel stages)
 are interpolated onto the cadence those points establish, are marked
 `interpolated: true` in `core/stages.js`, and are labeled "est." in the app.
 
@@ -629,7 +734,8 @@ Checked against real thermometer records for 1996–2025 near Missouri Valley, I
 **GDU accumulation is accurate** — within about 1% of the nearest station, and
 correctly positioned between the stations north and south of it.
 
-**Frost dates run late** — roughly 1 to 2 weeks late against the rural stations.
+**Frost dates run late** — 1 to 3 weeks late against the rural stations (7 days
+against Council Bluffs and Omaha, 19 against Atlantic and Sioux City).
 A 9–25 km grid cell averages away the radiative cooling that makes a low spot in a
 field frost first, so the model's nighttime minima are too warm. This bias is
 specific to frost because a frost date hinges on one night's minimum rather than a
@@ -639,6 +745,162 @@ earlier date. Treat every frost date as the **late** end of the range.
 
 If a later version needs field-accurate frost, the fix is to read the nearest COOP
 or ASOS station directly (IEM's API covers the whole US) rather than the grid.
+
+**One caveat on the two "This app" frost columns above.** They were measured
+before v3.5 changed the frost quantile from interpolating to nearest-rank (see
+the audit section below). At this grid point essentially every year in the record
+reaches 28 °F, so no censoring is involved and the change can only move these
+dates by a day or so — but the numbers have not been re-derived against the live
+archive since, so treat them as ±1 day rather than exact. The GDU columns are
+unaffected; that code did not change. Re-running the comparison is a one-off
+against Open-Meteo's archive endpoint plus IEM, and is worth doing before these
+figures get quoted anywhere that matters.
+
+## The v3.5 accuracy audit
+
+v3.5 is an audit release. Nothing was added; a list of things that were quietly
+wrong was found and fixed. Recorded here because several of them produced
+plausible-looking numbers rather than obvious errors, which is the kind of bug
+that survives a casual look.
+
+**Frost dates were being invented past the end of the record.** `firstFreezeStats`
+records a year that never froze inside its 140-day window as a censored
+observation — a lower bound, not a date. The interpolating percentile then
+averaged a real freeze offset with that sentinel and returned a finite number
+below it, which rendered as a calendar day. On a 30-year fixture whose latest real
+freeze was Nov 14: 15 freezing years produced a "median" of Dec 2, and 3 produced
+a "1 year in 10" date of Dec 16. Frost quantiles are now nearest-rank on the
+empirical distribution (which is what Kaplan-Meier reduces to when all the
+censoring falls after all the events), so a reported date is always a day some
+year actually froze on, and a quantile that lands in the censored tail returns
+null instead of a guess. The screen, the PDF and the shared text all now key on
+the 10th-percentile date rather than the median, so they can no longer disagree
+about whether a location has a frost problem.
+
+**Stage codes were wrong.** Dough read R3 and denting read "R4/R5"; dough is R4
+and denting is R5. The GDU values were and are correct — the seed-industry
+reference this ladder is built on puts blister at ~1,660, dough at 1,925, dent at
+2,190–2,450 and black layer at ~2,700, which is what ships. Only the labels moved.
+
+**A blank temperature counted as a 10-GDU day.** `dailyGdu` guarded against
+`null` and `undefined`, but `Number("")` and `Number(false)` are both 0, which is
+finite, clamps up to the 50 °F base and yields 10 GDU out of an empty field.
+
+**A gap in the weather record was labelled with a date it didn't cover.**
+`buildSeason` echoed the caller's download horizon back out, so a total that
+stopped at May 30 was printed under "Through Jul 1". The coverage dates are now
+derived from the offsets actually used, the download horizon is kept separately
+for the sentences that describe the fetch, and a `truncatedByGap` flag puts a
+warning on screen — including when the hole lands on the planting day itself,
+which is the most broken case and previously said nothing at all.
+
+**An estimate could land outside the range the app calls real.** Entering 400 GDU
+to silk (legal — the floor is 400) estimated black layer at 488, below the 900
+the same function rejects as a typo when typed. Estimates are now range-checked,
+a silk-to-black-layer span under 200 GDU is refused rather than collapsing four
+stage dates onto one day, and a basis outside the fitted range (silk 940–1,420,
+black layer 1,790–2,920) is flagged on all three surfaces instead of being handed
+back with an accuracy figure it hasn't earned.
+
+**The outlier check was comparing a hybrid to itself.** Rebadges of one hybrid —
+identical RM, silk and black layer under different trait suffixes — each counted
+as an independent neighbour, satisfying the "at least three to compare against"
+bar on their own and pulling the median onto their shared value. The window also
+went one-sided at the ends of the list, so the shortest hybrid was flagged for
+being short. Neighbours are now deduped, both sides of the window are required,
+and silk is checked as well as black layer. Over the shipped list it fires exactly
+once, on 89-58 SSPRORIB, which is the known real outlier.
+
+**Three surfaces were telling three different stories.** The screen, the PDF and
+the shared text each carried their own copy of several judgements, and they had
+drifted. The PDF gated its whole frost section on the median freeze date, so at a
+mild location it printed "No 28 °F freeze appears in this location's 30-year
+record" onto the sheet a rep hands a grower while the screen showed a 1-in-10
+freeze date and a red "caught short of black layer" verdict. The PDF carried no
+frost verdict at all — three dates and no interpretation, the most decision-
+relevant sentence on the screen simply absent from the artifact that outlives the
+session. The input screen warned that an out-of-range basis invalidated the
+accuracy figures; the results screen then reasserted those figures; the PDF said
+nothing. The shared text substituted a phrase into a slot that expected a date
+("Median first 28 °F freeze no freeze in over half of years"). Each of these is now a
+single function every surface calls: `core/frostVerdict.js` for the verdict,
+`core/frostText.js` for `noFreezeText()`, `freezeCoverageNote()`,
+`solidCaption()` and `temperatureProvenance()`, and `extrapolationCaveat()` in
+`core/hybridEstimate.js`.
+
+The first attempt at this left `noFreezeText` and `solidCaption` duplicated —
+one private copy per surface, "identical for now" — and by the time it was
+checked the two `noFreezeText` copies had *already* diverged: the PDF's dropped
+the "— try recalculating later" that told the reader what to do about it. Two
+copies is how they drifted the first time; two copies is how they drifted again
+inside one release. They are one function each now.
+
+**Captions described the download instead of the data.** After the coverage dates
+were fixed, four sentences still needed the *requested* horizon (they are about
+what was fetched) and two needed the *derived* one (they describe the solid line
+on the chart). Getting that split backwards produced a chart captioned "forecast
+through Aug 21" beside a gap warning saying the record stopped Aug 15. Relatedly,
+"this season is entirely on the books" was printed whenever the forecast didn't
+extend the curve — which is also true when the forecast fetch *failed*, so the
+method card announced a completed season one bullet above the bullet reporting
+the forecast failure.
+
+**The report grew onto a third sheet — twice.** The fixes above added prose, and
+an RM-estimated hybrid had under 20 pt of slack on page two. The file header had
+always claimed the charts were the flexible part — "if something has to give,
+they shrink before the caveats get cut" — but the heights were hard-coded
+constants, so in practice the caveats won and the report spilled.
+
+The first fix made the stage chart measure this run's conditional blocks and give
+back what they need. It then spilled again, because the frost verdict was treated
+as fixed height and it is not: it wraps to two lines for every "too long to
+finish" wording and for every censored-median wording — which is the mild-grid-
+point case this release exists to handle. Two related near-misses in the same
+place: two notes were measured in the normal font and drawn in bold, which
+under-reserves, and two were measured with fixed-length stand-in strings that
+would have had to be kept in step with the real wording by hand. Every measured
+term now uses the real string, and the two bold ones share a single style
+constant between the measurement and the draw — pinned by a check in
+`pdf_pages.mjs`, because no page-count fixture can feel a 10 pt
+under-reservation against 23 pt of slack.
+
+Verified across a 12,544-render sweep — 4 climates × 14 hybrid inputs × 8
+planting dates × 7 frost states × 4 thin-baseline values — plus a wider
+independent sweep that added the gap and whole-season-thin axes. Zero over two
+pages, and the worst configuration leaves the stage chart 10 pt above its floor.
+
+`test/pdf_pages.mjs` exists because the e2e fixture cannot reach any of these
+branches; it stayed green through both regressions.
+
+**Smaller ones.** A failed catalog load was memoized, so a first visit with no
+signal left the hybrid picker permanently empty for the life of the page. Typing
+"NC " into the search box returned nothing instead of the whole list. The three
+climatology rows were internally labelled "forecast". The shared text printed the
+three collapsed this-season rows the screen and PDF deliberately merge, and its
+PDF still reflected whichever scenario was selected when the page loaded rather
+than the one on screen. A black-layer date past the *median* freeze rendered as
+"it has -13 days". The "In-sample error would read roughly 10% lower" note was
+wrong — the real gap is 0.8–1.9%, which is evidence the models aren't
+overfitted, and leave-one-out is still what gets quoted. And `core/frostVerdict.js`
+was very nearly shipped without a service-worker precache entry, which would have
+broken the app on a cold offline load; a test now checks that list against the
+files on disk in both directions.
+
+**What this cost, and what it says.** Five audit rounds and thirty-odd defects,
+of which roughly a third were introduced by the fixes for the earlier ones —
+including a two-page report that grew to three, twice; a layout test whose
+fixture was shaped to the same misreading as the code it was checking, so the two
+agreed and neither was right; and a first attempt at de-duplicating shared
+wording that left two of four functions duplicated "identical for now", one of
+which had already diverged by the time it was checked.
+
+Almost none of these produced an obvious error. They produced plausible numbers
+and confident sentences, which is the failure mode that survives a careful read.
+Three things earned their keep: every fix that touched a number got a test
+pinning the boundary it moved; every fact appearing on more than one surface
+moved into one function in `core/` that all of them call; and each layout test
+now asserts that the block it is named after actually rendered, because a test
+that stops exercising its own branch still reads as coverage.
 
 ## What it deliberately does not do
 
@@ -672,12 +934,25 @@ public/
   index.html  manifest.webmanifest  sw.js
   css/    styles.css (from Corn Plot Harvest, verbatim)  gdu.css (new)
   js/
-    core/   dates.js  gdu.js  season.js  weather.js  location.js   <- pure, testable
-    ui/     router.js  chart.js  brand.js  dom.js  theme.js
+    core/   dates.js  gdu.js  season.js  stages.js  weather.js       <- pure, testable
+            location.js  hybridCatalog.js  hybridEstimate.js
+            frostVerdict.js  frostText.js  pdfBuilder.js
+    ui/     router.js  chart.js  stageChart.js  brand.js  dom.js  theme.js
+            fileSave.js  logoCache.js  pdfLibLoader.js
             components/  screens/  stores/
+              screens: brandSelect  home  savedLocations  calculator
+                       results  settings  help
 test/
-  unit_gdu.mjs  e2e_smoke.mjs  shots/
+  unit_gdu.mjs  pdf_pages.mjs  e2e_smoke.mjs  shots/
 ```
 
 `js/core/` has no DOM and no `fetch` except in `weather.js`/`location.js`, which
 is what makes the whole engine unit-testable.
+
+`frostVerdict.js` and `frostText.js` look like UI text and are in `core/` on
+purpose: the screen and the PDF both need the sentence that answers "will this
+hybrid finish here", and while it lived inside the results screen the printed
+sheet carried the three freeze dates with no interpretation at all. Anything both
+surfaces must agree on belongs here, not in whichever one wrote it first — and
+not duplicated with a comment promising the copies match, which is what the first
+attempt did and what let two of them diverge again inside the same release.

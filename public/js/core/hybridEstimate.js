@@ -20,8 +20,15 @@
 //
 // Quoted errors below are LEAVE-ONE-OUT: each hybrid was predicted by a
 // model fitted on the other 132 and never on itself. That is the honest
-// number. In-sample error would read roughly 10% lower and would be
-// measuring the fit's memory rather than its accuracy.
+// number, and it is what gets quoted regardless of how small the gap is.
+//
+// The gap here is small — in-sample median error runs 0.8% to 1.9% below
+// leave-one-out across the four models (RMSE 1.3% to 2.0%). This comment
+// used to claim "roughly 10% lower", which was wrong: with 133 points
+// and one predictor, no single hybrid moves the fit much, so a two-line
+// model has very little memory to flatter itself with. The small gap is
+// evidence the models are not overfitted; it is not a reason to switch
+// to the in-sample number.
 //
 //   estimate               median   p90    worst    R2
 //   silk from black layer    25     58     116     0.852
@@ -71,6 +78,20 @@ export const FITTED_N = 133;
 export const RM_FITTED_MIN = 77;
 export const RM_FITTED_MAX = 118;
 
+/**
+ * Silk and black-layer ranges the models were actually fitted over — the
+ * min and max of the 133-hybrid list. Much narrower than the hard bounds
+ * below, which only exist to catch typos. A straight line fitted over
+ * silk 940–1420 says nothing useful about silk 500; it just keeps
+ * extrapolating, and blFromSilk in particular runs right out of the
+ * physically possible range if you let it (silk 500 -> black layer 723,
+ * below anything a corn plant has ever done).
+ */
+export const SILK_FITTED_MIN = 940;
+export const SILK_FITTED_MAX = 1420;
+export const BL_FITTED_MIN = 1790;
+export const BL_FITTED_MAX = 2920;
+
 /** Hard input bounds — outside these, a typed value is a typo, not a hybrid. */
 export const RM_MIN = 60;
 export const RM_MAX = 135;
@@ -78,6 +99,12 @@ export const SILK_MIN = 400;
 export const SILK_MAX = 2200;
 export const BL_MIN = 900;
 export const BL_MAX = 4000;
+
+/**
+ * Smallest silk-to-black-layer span the app will calculate on. See the
+ * check in resolve() for why this exists.
+ */
+export const MIN_SILK_TO_BL_SPAN = 200;
 
 /**
  * y = slope*x + intercept, with leave-one-out |error| percentiles in GDU.
@@ -119,7 +146,7 @@ function num(v) {
  * rather than presenting an estimate as a measurement.
  *
  * @param {{gduToSilk?: any, gduToBlackLayer?: any, rm?: any}} input
- * @returns {{ok: true, silk: ResolvedValue, blackLayer: ResolvedValue, rm: number|null, rmOutsideFit: boolean, anyEstimated: boolean} | {ok: false, error: string}}
+ * @returns {{ok: true, silk: ResolvedValue, blackLayer: ResolvedValue, rm: number|null, rmOutsideFit: boolean, basisOutsideFit: boolean, anyEstimated: boolean} | {ok: false, error: string}}
  */
 export function resolve(input) {
   const rawSilk = num(input && input.gduToSilk);
@@ -162,6 +189,21 @@ export function resolve(input) {
     else blackLayer = { value: apply(MODELS.blFromRm, rawRm), source: "fromRm", model: MODELS.blFromRm };
   }
 
+  // An estimate is only as good as the range it was fitted over, and
+  // nothing downstream re-checks a value the model produced. Without this
+  // guard a legal-but-extreme entry walks straight through: silk 500 (a
+  // valid entry, SILK_MIN is 400) estimates black layer at 723, which is
+  // below BL_MIN — a number the same function would have rejected as a
+  // typo had the user typed it. Refuse rather than clamp; clamping would
+  // invent a bound-shaped answer and present it with a ±46 GDU accuracy
+  // note it has not earned.
+  if (silk.source !== "entered" && (silk.value < SILK_MIN || silk.value > SILK_MAX)) {
+    return { ok: false, error: outOfRangeError("GDUs to silk", silk.value, rawBl !== null ? "black layer" : "relative maturity") };
+  }
+  if (blackLayer.source !== "entered" && (blackLayer.value < BL_MIN || blackLayer.value > BL_MAX)) {
+    return { ok: false, error: outOfRangeError("GDUs to black layer", blackLayer.value, rawSilk !== null ? "silk" : "relative maturity") };
+  }
+
   // Silking always precedes black layer. With the fitted slopes this
   // can only be violated by a hand-entered pair, but the guard covers
   // an estimate too rather than trusting the algebra to hold forever.
@@ -172,6 +214,21 @@ export function resolve(input) {
     return { ok: false, error: "Those inputs produce a silk rating at or past black layer, which can't happen. Check the numbers." };
   }
 
+  // Grain fill needs room. Ordering alone is not enough: stages.js places
+  // every reproductive stage proportionally between silk and black layer,
+  // so a span of a few GDU collapses blister, dough, dent and maturity
+  // onto the same calendar day and the app prints four identical dates
+  // that look like a bug rather than like the bad input they are. The
+  // narrowest real span in the built-in list is 850 GDU; 200 is set well
+  // below anything plausible so it only catches transposed digits and
+  // dropped zeroes, never a legitimate short-season hybrid.
+  if (blackLayer.value - silk.value < MIN_SILK_TO_BL_SPAN) {
+    return {
+      ok: false,
+      error: `Only ${blackLayer.value - silk.value} GDU between silking and black layer leaves no room for grain fill — the closest pair in the built-in list is 850 apart. Check both numbers.`,
+    };
+  }
+
   return {
     ok: true,
     silk,
@@ -180,8 +237,23 @@ export function resolve(input) {
     // The models were fitted over RM 77–118. Outside that they're
     // extrapolating, which is worth saying out loud.
     rmOutsideFit: rawRm !== null && (rawRm < RM_FITTED_MIN || rawRm > RM_FITTED_MAX),
+    // Same story for a GDU-based estimate: the number is inside the
+    // physically possible range but the model is reading off the end of
+    // its own fit, so the quoted ±46 GDU no longer applies.
+    basisOutsideFit:
+      (silk.source === "fromBlackLayer" && (rawBl < BL_FITTED_MIN || rawBl > BL_FITTED_MAX)) ||
+      (blackLayer.source === "fromSilk" && (rawSilk < SILK_FITTED_MIN || rawSilk > SILK_FITTED_MAX)),
     anyEstimated: silk.source !== "entered" || blackLayer.source !== "entered",
   };
+}
+
+/**
+ * Message for an estimate that landed outside the physically real range.
+ * Names the input it was derived from, because that is the number the
+ * user can actually go check.
+ */
+function outOfRangeError(what, value, basisLabel) {
+  return `Estimating ${what} from the ${basisLabel} you entered gives ${value.toLocaleString()}, which is outside anything real. That input is too far from the ${FITTED_N} hybrids these estimates were fitted on. Enter both GDU numbers, or check the one you entered.`;
 }
 
 /**
@@ -211,4 +283,36 @@ export function sourceLabel(rv, rm) {
 export function accuracyNote(rv) {
   if (!rv.model) return null;
   return `typically within ±${rv.model.medianErr} GDU, ±${rv.model.p90Err} in 1 case out of 10`;
+}
+
+/**
+ * The one wording for "this estimate is extrapolating past the data",
+ * shared by the input screen, the results screen and the PDF.
+ *
+ * It lives here because the three surfaces had drifted: the input screen
+ * warned, the results screen reasserted the ± figures the warning had
+ * just retracted, and the printed sheet — the one a grower keeps — said
+ * nothing at all.
+ *
+ * Returns null when nothing was estimated. An out-of-range relative
+ * maturity on a hybrid whose two GDU numbers were both typed in is not a
+ * problem: the RM was never used. Warning about it printed "the ± figures
+ * above do not apply" onto a card that had no ± figures on it.
+ *
+ * @param {{rm: number|null, anyEstimated: boolean, rmOutsideFit: boolean, basisOutsideFit: boolean}} h
+ * @returns {string|null}
+ */
+export function extrapolationCaveat(h) {
+  if (!h || !h.anyEstimated) return null;
+  const parts = [];
+  if (h.rmOutsideFit) {
+    parts.push(`a ${h.rm} day relative maturity sits outside the ${RM_FITTED_MIN}–${RM_FITTED_MAX} day range these models were fitted on`);
+  }
+  if (h.basisOutsideFit) {
+    parts.push(
+      `the GDU rating this was derived from sits outside the range the built-in list covers (silk ${SILK_FITTED_MIN.toLocaleString()}–${SILK_FITTED_MAX.toLocaleString()}, black layer ${BL_FITTED_MIN.toLocaleString()}–${BL_FITTED_MAX.toLocaleString()})`
+    );
+  }
+  if (!parts.length) return null;
+  return `Extrapolation warning: ${parts.join("; and ")}. The error figures above do not apply — treat the estimate as a rough bracket and use real ratings if you can get them.`;
 }

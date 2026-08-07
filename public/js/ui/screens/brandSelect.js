@@ -25,7 +25,10 @@ export function render(container) {
         className: "brand-select-btn",
         onclick: () => {
           brandStore.selectBrand(brand.id);
-          navigate("calculator");
+          // The brand landing screen, not the input form — picking a
+          // brand is the start of a session, and the next question is
+          // "an existing location or a new one", not "type a ZIP".
+          navigate("home");
         },
       },
       [

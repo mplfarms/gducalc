@@ -26,11 +26,13 @@ import { getBrand } from "../brand.js";
 import { loadTemperatureData, toSeries } from "../../core/weather.js";
 import { buildDailyIndex, offsetAtTarget, bandTempStats } from "../../core/gdu.js";
 import { buildSeason, baselineYearsFor, BASELINE_YEARS } from "../../core/season.js";
-import { addDays, daysBetween, formatShort, yearOf } from "../../core/dates.js";
+import { addDays, formatShort, yearOf } from "../../core/dates.js";
 import { renderGduChart, buildChartLegend } from "../chart.js";
 import { renderStageChart, currentStage } from "../stageChart.js";
-import { sourceLabel, accuracyNote, FITTED_N } from "../../core/hybridEstimate.js";
+import { sourceLabel, accuracyNote, extrapolationCaveat, FITTED_N } from "../../core/hybridEstimate.js";
 import { stagesForHybrid, datedStages } from "../../core/stages.js";
+import { frostVerdict } from "../../core/frostVerdict.js";
+import { noFreezeText, freezeCoverageNote, solidCaption, temperatureProvenance, gapNoteText, thinBaselineText } from "../../core/frostText.js";
 
 // Both charts render into containers they have to measure, so each hands
 // back a handle that has to be torn down when the screen is rebuilt —
@@ -248,7 +250,12 @@ async function loadAndPaint(container, body, state, hybrid) {
     season,
     hybrid,
     location: state.location,
-    rows: hybrid ? season.rows : [],
+    // The three current-* rows are collapsed out here for the same reason
+    // the screen and the PDF collapse them: they share identical observed
+    // and forecast data, so their dates are frequently identical, and
+    // three identical rows in a text message reads as a fault in the app.
+    // buildSummary prints this season from season.currentStage instead.
+    rows: hybrid ? season.rows.filter((r) => !r.key.startsWith("current-")) : [],
     brand: getBrand(brandStore.getState().selectedBrand),
     stages: forShare ? forShare.dated : null,
     scenarioLabel: forShare ? (season.rows.find((r) => r.key === forShare.key) || {}).label || "Normal" : null,
@@ -262,6 +269,14 @@ async function loadAndPaint(container, body, state, hybrid) {
   const cards = [headerCard(state, hybrid)];
   const status = statusCard(season, state, res);
   if (status) cards.push(status);
+  // statusCard is where the gap warning belongs, but statusCard is
+  // exactly what a gap can suppress: a hole on or before the planting day
+  // leaves nothing accumulated, statusCard returns null, and the most
+  // broken case on the screen was the one that explained itself least.
+  // Wrapped in a card of its own: everything else in .screen-body is a
+  // <section class="card">, so a bare <p> here rendered as an orange line
+  // floating in the gap between two cards.
+  else if (season.truncatedByGap) cards.push(h("section", { className: "card" }, [h("h3", { className: "section-header" }, "Incomplete Weather Record"), gapNotice(season)]));
   cards.push(chartCard(season, hybrid));
   // Everything below needs a hybrid's two GDU ratings to mean anything.
   if (hybrid) {
@@ -403,7 +418,26 @@ function statusCard(season, state, res) {
         ? `Through ${formatShort(season.lastObservedIso, { withYear: true })}${res.cached ? " (cached earlier today)" : ""}.`
         : `Through ${formatShort(season.lastObservedIso, { withYear: true })}${res.cached ? " (cached earlier today)" : ""} — roughly ${daysEquivalent} ${daysEquivalent === 1 ? "day" : "days"} ${vs >= 0 ? "ahead of" : "behind"} a normal year at this point.`
     ),
+    // A hole in the weather record stops accumulation cold. Better to say
+    // so than to let the total look current when it is not.
+    season.truncatedByGap ? gapNotice(season) : null,
   ]);
+}
+
+/**
+ * The one place the "your weather record has a hole in it" wording lives.
+ * Two callers: inside the status card when there is a total to caveat,
+ * and standing alone when the gap left no total at all.
+ */
+function gapNotice(season) {
+  // The shared sentence plus the one thing only the screen can offer —
+  // the exact date it stopped on, and the suggestion to try again.
+  const where = season.lastKnownIso ? ` The last day on the books is ${formatShort(season.lastKnownIso, { withYear: true })}.` : "";
+  return h("p", { className: "field-note field-note-warn" }, `${capitalizeFirst(gapNoteText(season))}.${where} Recalculate later to pick up the missing days.`);
+}
+
+function capitalizeFirst(s) {
+  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 /**
@@ -432,6 +466,7 @@ function stat(value, label) {
 // ---------------------------------------------------------------
 // Chart
 // ---------------------------------------------------------------
+
 function chartCard(season, hybrid) {
   const holder = h("div", { className: "gdu-chart-holder" });
   const card = collapsibleCard("chart", "GDU Accumulation", [
@@ -440,9 +475,13 @@ function chartCard(season, hybrid) {
     h(
       "p",
       { className: "box-plot-caption" },
-      season.knownEndOffset > season.observedEndOffset
-        ? `Solid = observed through ${formatShort(season.lastObservedIso)} plus forecast through ${formatShort(season.lastKnownIso)}. Dashed = projected. Drag across the chart to read values.`
-        : "Dashed = projected. Drag across the chart to read values."
+      // The DERIVED dates, deliberately. This sentence describes the solid
+      // line, and the solid line is drawn to knownEndOffset — so if a gap
+      // cut the record short, the caption has to move with it or it
+      // contradicts the gap notice two cards up. The method card, which
+      // describes what was downloaded, is the place for the requested
+      // horizon.
+      `${solidCaption(season, formatShort)} Drag across the chart to read values.`
     ),
   ]);
   // The chart measures its container, so it has to be attached first.
@@ -514,22 +553,13 @@ const STAGE_BASIS_NOTE =
 // the year count in the method card either way, but a count that has
 // actually degraded deserves to be said where the numbers are, not in a
 // footnote at the bottom.
-const MIN_TRUSTWORTHY_YEARS = 20;
 function thinEnvelopeWarning(season) {
-  const rest = (season.remainingYearsUsed || []).length;
-  const whole = (season.yearsUsed || []).length;
-  const problems = [];
-  if (whole > 0 && whole < MIN_TRUSTWORTHY_YEARS) {
-    problems.push(`the whole-season rows come from ${whole} complete years, not ${BASELINE_YEARS}`);
-  }
-  if (season.currentStage !== null && rest > 0 && rest < MIN_TRUSTWORTHY_YEARS) {
-    problems.push(`the hot and cool finishes come from ${rest}`);
-  }
-  if (problems.length === 0) return null;
+  const text = thinBaselineText(season, BASELINE_YEARS);
+  if (!text) return null;
   return h(
     "p",
     { className: "gdu-verdict gdu-verdict-warn gdu-thin-envelope" },
-    `Thin baseline for this location — ${problems.join(", and ")}. Percentiles off a short record are indicative, not a real 10th-to-90th. This usually means the weather archive has gaps at this grid point; a location a few miles away may have a fuller record.`
+    `Thin baseline for this location — ${text}. This usually means the weather archive has gaps at this grid point; a location a few miles away may have a fuller record.`
   );
 }
 
@@ -586,6 +616,9 @@ function stageCell(iso, offset, isProjected, season, hybrid) {
 // file's header for why that's a warning, not a footnote.
 function frostBadge(iso, season) {
   if (!season || !season.killingFreeze || !season.killingFreeze.medianMonthDay) return null;
+  // A stage date that rolled into the next calendar year would compare
+  // against the FOLLOWING year's freeze and produce nonsense.
+  if (yearOf(iso) !== season.plantingYear) return null;
   const freezeIso = `${yearOf(iso)}-${season.killingFreeze.medianMonthDay}`;
   return iso > freezeIso ? h("span", { className: "gdu-badge-frost" }, "after median freeze") : null;
 }
@@ -599,18 +632,30 @@ const FROST_ACCURACY_NOTE =
 function frostCard(season, hybrid) {
   const kf = season.killingFreeze;
   const lf = season.lightFrost;
-  if (!kf.medianMonthDay) {
+  const year = season.plantingYear;
+
+  // The p10 is what the verdict is scored on, so IT is the thing that
+  // has to exist. The median can legitimately be null now: at a mild
+  // grid point more than half the years get through the window without a
+  // killing freeze, and the honest median is "no freeze", not a date
+  // manufactured from the minority of years that did freeze.
+  if (!kf.p10MonthDay) {
     return collapsibleCard("frost", "Frost Risk", [
-      h("p", {}, "No 28 °F freeze appears in this location's 30-year record after August 1, so a killing freeze isn't the limiting factor here."),
+      h("p", {}, noFreezeText(kf)),
+      h("p", { className: "field-note" }, FROST_ACCURACY_NOTE),
     ]);
   }
 
-  const year = season.plantingYear;
-  const killMedianIso = `${year}-${kf.medianMonthDay}`;
-  // The verdict is scored against the EARLY (1-year-in-10) freeze, not
-  // the median. A hybrid that black-layers exactly on the median freeze
-  // date gets caught one year in two, which is not a pass.
   const killEarlyIso = `${year}-${kf.p10MonthDay}`;
+  const killMedianIso = kf.medianMonthDay ? `${year}-${kf.medianMonthDay}` : null;
+  const medianText = killMedianIso ? formatShort(killMedianIso) : "no freeze";
+
+  // How often a killing freeze happens at all. Below 90% the record is
+  // too thin for a "median freeze date" to be a fair summary, and the
+  // card says so rather than quoting one. Shared with the PDF, which
+  // folds the same sentence into its accuracy paragraph.
+  const coverage = freezeCoverageNote(kf);
+  const coverageNote = coverage ? h("p", { className: "field-note" }, coverage) : null;
 
   // Without a hybrid there is nothing to score the freeze against, so
   // the dates stand on their own — which is still useful: "when does
@@ -619,65 +664,28 @@ function frostCard(season, hybrid) {
     return collapsibleCard("frost", "Frost Risk", [
       h("div", { className: "summary-stats" }, [
         stat(formatShort(killEarlyIso), "28 °F by this date 1 yr in 10"),
-        stat(formatShort(killMedianIso), "median 28 °F freeze"),
+        stat(medianText, "median 28 °F freeze"),
         lf.medianMonthDay ? stat(formatShort(`${year}-${lf.medianMonthDay}`), "median 32 °F frost") : stat("—", "median 32 °F frost"),
       ]),
+      coverageNote,
       h("p", { className: "field-note" }, FROST_ACCURACY_NOTE),
     ]);
   }
 
-  // Compare against the LATEST black-layer date among the this-season
-  // rows (the cool finish) — the risk question is "could this fail",
-  // not "does it work if everything goes well".
-  const currentRows = season.rows.filter((r) => r.key.startsWith("current-"));
-  const pool = currentRows.length ? currentRows : season.rows.filter((r) => r.key === "cool");
-  let latest = null;
-  for (const r of pool) {
-    if (r.blackLayerIso === null) {
-      latest = null;
-      break;
-    }
-    if (latest === null || r.blackLayerIso > latest) latest = r.blackLayerIso;
-  }
-
-  let verdict;
-  if (latest === null) {
-    verdict = h(
-      "p",
-      { className: "gdu-verdict gdu-verdict-bad" },
-      `This hybrid doesn't reach black layer at all within the season window in at least one scenario. At ${hybrid.gduToBlackLayer.toLocaleString()} GDU it's too long for this location and planting date.`
-    );
-  } else {
-    const marginEarly = daysBetween(latest, killEarlyIso);
-    const marginMedian = daysBetween(latest, killMedianIso);
-    if (marginEarly < 0) {
-      verdict = h(
-        "p",
-        { className: "gdu-verdict gdu-verdict-bad" },
-        `In a 1-year-in-10 early freeze (${formatShort(killEarlyIso)}) this hybrid would be caught ${Math.abs(marginEarly)} days short of black layer. Against the median freeze it has ${marginMedian} days. That's a real risk of an unfinished crop, not a rounding issue.`
-      );
-    } else if (marginEarly < 10) {
-      verdict = h(
-        "p",
-        { className: "gdu-verdict gdu-verdict-warn" },
-        `Only ${marginEarly} days of margin against a 1-year-in-10 early freeze (${formatShort(killEarlyIso)}), ${marginMedian} against the median. Tight — a cool September puts this hybrid at risk.`
-      );
-    } else {
-      verdict = h(
-        "p",
-        { className: "gdu-verdict gdu-verdict-good" },
-        `${marginEarly} days of margin even against a 1-year-in-10 early freeze (${formatShort(killEarlyIso)}), ${marginMedian} against the median. Comfortable for this location and planting date.`
-      );
-    }
-  }
+  // The verdict itself lives in core/frostVerdict.js so the PDF prints
+  // the same sentence. It used to be built here and nowhere else, which
+  // is why the printed sheet carried three dates and no interpretation.
+  const v = frostVerdict(season, hybrid);
+  const verdict = v ? h("p", { className: `gdu-verdict gdu-verdict-${v.tone}` }, v.text) : null;
 
   return collapsibleCard("frost", "Frost Risk", [
     h("div", { className: "summary-stats" }, [
       stat(formatShort(killEarlyIso), "28 °F by this date 1 yr in 10"),
-      stat(formatShort(killMedianIso), "median 28 °F freeze"),
+      stat(medianText, "median 28 °F freeze"),
       lf.medianMonthDay ? stat(formatShort(`${year}-${lf.medianMonthDay}`), "median 32 °F frost") : stat("—", "median 32 °F frost"),
     ]),
     verdict,
+    coverageNote,
     h("p", { className: "field-note" }, FROST_ACCURACY_NOTE),
   ]);
 }
@@ -786,8 +794,13 @@ function withBandTemps(dated, season) {
 }
 
 /**
- * "88°/70°" — hottest daytime high over warmest nighttime low, the
- * compact form used in chart bands, the Data table and the PDF.
+ * "88°/70°" — hottest daytime high over warmest nighttime low.
+ *
+ * Only this file calls it. `stageChart.js` and `pdfBuilder.js` each
+ * inline the same one-line format; they agree today, and pulling all
+ * three onto this export would mean the chart layer importing from a
+ * screen. If a third divergence shows up, the move is into core/, not
+ * into here.
  */
 export function formatBandTemps(bt) {
   if (!bt) return null;
@@ -819,9 +832,34 @@ function stageSection(season, hybrid) {
     data.textContent = "";
     stages.appendChild(stagesCard(season, hybrid, paint));
     data.appendChild(dataCard(season, hybrid));
+    // The share payload is built once when the season loads, but the
+    // scenario picker can change what the user is looking at afterwards.
+    // Without this, switching "Dates shown for" to Abnormally hot and
+    // then tapping Share produced a PDF whose stage chart and caption
+    // still said "This season — normal finish": the printed sheet
+    // disagreeing with the screen it was printed from.
+    refreshShareStages(season, hybrid);
   }
   paint();
   return { stages, data };
+}
+
+/**
+ * Test seam: what the share payload would currently label its scenario.
+ * shareContext is module-private on purpose (it is read at click time so
+ * a share tapped mid-load can't hand out a half-built object), and this
+ * is the one property a test needs to see to prove it tracks the picker.
+ */
+export function __shareScenarioLabelForTest() {
+  return shareContext ? shareContext.scenarioLabel : null;
+}
+
+/** Re-points shareContext's stage list at whatever scenario is showing. */
+function refreshShareStages(season, hybrid) {
+  if (!shareContext || !hybrid) return;
+  const view = stagesForView(season, hybrid);
+  shareContext.stages = view.dated;
+  shareContext.scenarioLabel = (season.rows.find((r) => r.key === view.key) || {}).label || "Normal";
 }
 
 function stagesCard(season, hybrid, repaint) {
@@ -932,7 +970,7 @@ function methodCard(season, res, state, hybrid) {
       h("li", {}, "Accumulation starts on the planting date itself."),
       h("li", {}, `Normal, hot and cool are the 50th, 90th and 10th percentiles of accumulation across ${yrs.length} complete years (${yearRange}) at this exact grid point — an envelope, not a replay of any one year.`),
       h("li", {}, "The three rest-of-season finishes — normal, hot and cool — share identical observed and forecast data and differ only in how the remaining days are assumed to go. They are collapsed into one “this season” row: a date the crop has already passed cannot differ between them, and only a projected date gets a hot-to-cool range."),
-      h("li", {}, `Temperatures: ERA5 reanalysis via Open-Meteo for history and the current season through ${formatShort(season.lastObservedIso, { withYear: true })}, plus Open-Meteo's 16-day forecast through ${formatShort(season.lastKnownIso)}.`),
+      h("li", {}, temperatureProvenance(season, formatShort)),
       h("li", {}, `Grid point: ${state.location.lat.toFixed(4)}, ${state.location.lon.toFixed(4)}.`),
       hybrid ? null : h("li", {}, "No hybrid was entered, so no stage dates are shown — the curves are the heat itself. Add a hybrid on the input screen for silk and black layer predictions."),
       hybrid && hybrid.anyEstimated
@@ -948,6 +986,11 @@ function methodCard(season, res, state, hybrid) {
               ` Those figures come from an ordinary least-squares fit on all ${FITTED_N} hybrids in the built-in list, with error measured by leaving each hybrid out of the fit and predicting it — so it's out-of-sample error, not the fit describing itself. RM is the weakest basis: it explains 87% of the variation in black layer, and the worst hybrid in the list sits 389 GDU off its maturity's trend, which is about two and a half weeks of grain fill. Use the real ratings when you can get them.`,
           ])
         : null,
+      // The input screen warns about an out-of-range basis; this screen
+      // used to quietly reassert the ± figures the warning just retracted.
+      // One shared wording, so the input screen, this card and the PDF
+      // cannot drift apart again.
+      extrapolationCaveat(hybrid) ? h("li", { className: "gdu-method-warn" }, extrapolationCaveat(hybrid)) : null,
       res.forecastError ? h("li", { className: "gdu-method-warn" }, `The 16-day forecast failed to load (${res.forecastError}), so the projection starts from the last observed day instead.`) : null,
     ]),
     h(

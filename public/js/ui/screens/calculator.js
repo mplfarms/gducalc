@@ -13,15 +13,15 @@ import { h, mount } from "../dom.js";
 import { createTopBar } from "../components/topBar.js";
 import { createDatePicker } from "../components/datePicker.js";
 import { showToast } from "../components/toast.js";
-import { showConfirm } from "../components/modal.js";
 import { BRANDS, getBrand, brandedHybridName } from "../brand.js";
 import * as brandStore from "../stores/brandStore.js";
 import * as inputStore from "../stores/inputStore.js";
 import { navigate } from "../router.js";
 import { lookupZip } from "../../core/location.js";
 import * as catalog from "../../core/hybridCatalog.js";
-import { resolve as resolveHybridInputs, sourceLabel, accuracyNote, RM_FITTED_MIN, RM_FITTED_MAX, FITTED_N } from "../../core/hybridEstimate.js";
+import { resolve as resolveHybridInputs, sourceLabel, accuracyNote, extrapolationCaveat, FITTED_N } from "../../core/hybridEstimate.js";
 import { formatShort, todayIso, yearOf } from "../../core/dates.js";
+import { createSavedLocationList } from "../components/savedLocationList.js";
 
 export function render(container) {
   const brand = getBrand(brandStore.getState().selectedBrand);
@@ -190,11 +190,21 @@ export function render(container) {
   // renders as a blank select and silently drops the brand off the
   // report). "Other" is left alone — a competitor hybrid does not become
   // ours because the view changed.
-  const storedBrand = String(state.hybrid.brand || "");
-  const isStoredHouse = storedBrand !== "" && storedBrand !== "Other" && !houseBrands.some((b) => b.catalogBrandName === storedBrand);
-  const wantBrand = isStoredHouse || storedBrand === "" ? (brand ? brand.catalogBrandName : storedBrand) : storedBrand;
-  brandSelectEl.value = wantBrand;
-  if (wantBrand !== storedBrand) inputStore.updateHybrid({ brand: wantBrand });
+  //
+  // Runs on first render AND every time a saved entry is loaded — an
+  // entry saved under a different Brand View carries that view's house
+  // brand, which this dropdown does not offer, and assigning it straight
+  // to .value left the select rendering completely empty (not even the
+  // placeholder) while the store kept the foreign brand. A calculation
+  // from that state titled an NC+ report "MW 09-90 PCE".
+  function syncBrandSelect() {
+    const storedBrand = String(inputStore.getState().hybrid.brand || "");
+    const isStoredHouse = storedBrand !== "" && storedBrand !== "Other" && !houseBrands.some((b) => b.catalogBrandName === storedBrand);
+    const wantBrand = isStoredHouse || storedBrand === "" ? (brand ? brand.catalogBrandName : storedBrand) : storedBrand;
+    brandSelectEl.value = wantBrand;
+    if (wantBrand !== storedBrand) inputStore.updateHybrid({ brand: wantBrand });
+  }
+  syncBrandSelect();
 
   // The built-in list used to live behind a modal. It now hangs off this
   // field directly: type to filter, or tap and scroll the whole list.
@@ -439,11 +449,13 @@ export function render(container) {
         h("p", { className: "gdu-resolved-accuracy" }, `Estimated values are ${notes.join("; ")}. Checked by leaving each of the ${FITTED_N} listed hybrids out of the fit in turn and predicting it — real out-of-sample error, not the fit's own memory.`)
       );
     }
-    if (r.rmOutsideFit) {
-      resolvedNote.appendChild(
-        h("p", { className: "gdu-resolved-warn" }, `The estimator was fitted on hybrids from ${RM_FITTED_MIN} to ${RM_FITTED_MAX} day. At ${r.rm} day it's extrapolating past its data — treat the result as a rough bracket and use real ratings if you can get them.`)
-      );
-    }
+    // One shared wording for both the RM path and the GDU path, so this
+    // screen, the results screen and the PDF cannot say three different
+    // things about the same hybrid. It also returns null when nothing was
+    // estimated: an out-of-range RM on a hybrid whose two GDU numbers were
+    // both typed in is not a problem, because the RM was never used.
+    const caveat = extrapolationCaveat(r);
+    if (caveat) resolvedNote.appendChild(h("p", { className: "gdu-resolved-warn" }, caveat));
   }
 
   // ---- built-in hybrid list ----
@@ -584,114 +596,42 @@ export function render(container) {
     paintCatalogNote();
   });
 
-  const savedListEl = h("div", { className: "gdu-saved-list" });
-
-  function paintSavedList() {
-    const saved = inputStore.getState().saved;
-    savedListEl.textContent = "";
-    if (!saved.length) {
-      savedListEl.appendChild(h("p", { className: "empty-state" }, "No saved locations yet."));
-      return;
-    }
-    for (const item of saved) {
-      // A migrated entry from the old saved-hybrids list has no location
-      // or date. It still loads its hybrid, and says so rather than
-      // showing a blank second line.
-      const bits = [];
-      // A migrated row always HAS a hybrid, so the "hybrid only" note has
-      // to lead rather than being a fallback for an empty line — as a
-      // fallback it never fired on the very rows that need it, and the
-      // row looked like a normal saved location that simply would not
-      // calculate.
-      if (!item.location) bits.push("hybrid only — no field or date saved");
-      if (item.location) bits.push(item.location.label);
-      if (item.plantingIso) bits.push(`planted ${formatShort(item.plantingIso, { withYear: true })}`);
-      if (item.hybrid && item.hybrid.name) {
-        const hy = item.hybrid;
-        const nums = hy.gduToSilk && hy.gduToBlackLayer ? ` (${hy.gduToSilk.toLocaleString()} / ${hy.gduToBlackLayer.toLocaleString()})` : "";
-        bits.push(`${hy.name}${hy.rm ? ` · ${hy.rm} day` : ""}${nums}`);
-      } else if (item.location) {
-        bits.push("GDU only");
+  // The shared list component — the same one the standalone Saved
+  // Locations screen renders. The rows, the summary line, the delete
+  // confirmation and the guards deciding whether a row can calculate all
+  // live in one place; the only thing this screen adds is repainting its
+  // own boxes once an entry has loaded, which is what onAfterLoad is
+  // for.
+  const savedList = createSavedLocationList({
+    onAfterLoad: (st) => {
+      locationNameInput.value = st.locationName || "";
+      if (st.location) {
+        zipInput.value = st.location.zip || "";
+        paintLocation();
       }
+      if (st.plantingIso) datePicker.setValue(st.plantingIso);
+      paintPlantingNote();
+      const hy = st.hybrid;
+      // Not `brandSelectEl.value = hy.brand` — see syncBrandSelect.
+      syncBrandSelect();
+      nameInput.value = hy.name || "";
+      rmInput.input.value = hy.rm ?? "";
+      silkInput.input.value = hy.gduToSilk ?? "";
+      blInput.input.value = hy.gduToBlackLayer ?? "";
+      hybridMode = !!(hy.name || hy.gduToSilk || hy.gduToBlackLayer || hy.rm);
+      paintMode();
+      setHybridCollapsed(!hybridMode);
+      paintHybridField();
+      paintCatalogNote();
+      paintResolved();
+    },
+    // The form IS on screen here, so an entry that can't calculate is
+    // reported where the user can act on it rather than navigating.
+    sendToFormWhenIncomplete: false,
+  });
+  const savedListEl = savedList.el;
+  const paintSavedList = savedList.paint;
 
-      savedListEl.appendChild(
-        h("div", { className: "gdu-saved-row" }, [
-          h(
-            "button",
-            {
-              type: "button",
-              className: "gdu-saved-load",
-              onclick: () => {
-                inputStore.loadSavedLocation(item.id);
-                const st = inputStore.getState();
-                locationNameInput.value = st.locationName || "";
-                if (st.location) {
-                  zipInput.value = st.location.zip || "";
-                  paintLocation();
-                }
-                if (st.plantingIso) datePicker.setValue(st.plantingIso);
-                paintPlantingNote();
-                const hy = st.hybrid;
-                brandSelectEl.value = hy.brand || "";
-                nameInput.value = hy.name || "";
-                rmInput.input.value = hy.rm ?? "";
-                silkInput.input.value = hy.gduToSilk ?? "";
-                blInput.input.value = hy.gduToBlackLayer ?? "";
-                hybridMode = !!(hy.name || hy.gduToSilk || hy.gduToBlackLayer || hy.rm);
-                paintMode();
-                setHybridCollapsed(!hybridMode);
-                paintHybridField();
-                paintCatalogNote();
-                paintResolved();
-
-                // Tapping a saved location is a request for its answer,
-                // not a request to look at the form again — so it runs.
-                // The guards below are the same ones the Calculate
-                // button applies; a migrated hybrid-only row has no
-                // field or date of its own and correctly stops here.
-                const ready = inputStore.getState();
-                if (!ready.location || !ready.plantingIso) {
-                  showToast(`Loaded ${item.name}. Add a ZIP and a planting date to calculate.`, { type: "success", duration: 3500 });
-                  return;
-                }
-                const check = inputStore.validatedHybrid();
-                if (!check.ok) {
-                  showToast(check.error, { type: "error" });
-                  return;
-                }
-                navigate("results");
-              },
-            },
-            [
-              h("span", { className: "gdu-saved-name" }, item.name),
-              h("span", { className: "gdu-saved-meta" }, bits.join(" · ")),
-            ]
-          ),
-          h(
-            "button",
-            {
-              type: "button",
-              className: "icon-btn icon-btn-danger",
-              "aria-label": `Delete ${item.name}`,
-              onclick: async () => {
-                const yes = await showConfirm({
-                  title: "Delete location?",
-                  message: `Remove ${item.name} from your saved list?`,
-                  confirmLabel: "Delete",
-                  destructive: true,
-                });
-                if (yes) {
-                  inputStore.deleteSavedLocation(item.id);
-                  paintSavedList();
-                }
-              },
-            },
-            "✕"
-          ),
-        ])
-      );
-    }
-  }
   paintSavedList();
   paintResolved();
 
@@ -818,7 +758,11 @@ export function render(container) {
   mount(
     container,
     h("div", { className: "screen" }, [
-      createTopBar({ title: "GDU Calculator", onHome: () => navigate("calculator") }),
+      // Home used to be wired to this screen, which just reloaded it.
+      // Home is the brand landing screen now, and that one button is
+      // enough — a second control labelled "Home" beside it was the
+      // problem, not the solution.
+      createTopBar({ title: "GDU Calculator" }),
       h("main", { className: "screen-body" }, [locationCard, hybridCard, savedCard, goBtn]),
     ])
   );
